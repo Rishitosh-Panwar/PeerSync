@@ -1,0 +1,19 @@
+# Secrets and environment variables
+.env
+.env.local
+
+# Dependency folders (Massive files that don't belong on GitHub)
+node_modules/
+jspm_packages/
+
+# Build outputs
+dist/
+build/
+.next/
+out/
+
+# IDE/System files
+.vscode/
+.idea/
+.DS_Store
+Thumbs.db

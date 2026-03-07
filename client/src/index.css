@@ -1,3 +1,4 @@
+/* GLOBAL RESET */
 * {
   margin: 0;
   padding: 0;
@@ -8,7 +9,8 @@ body {
   width: 100vw;
   height: 100vh;
   overflow: hidden;
-  background-color: #1e1e1e;
+  background-color: #0f172a; /* Slate-900 for a more modern feel */
+  font-family: 'Inter', system-ui, -apple-system, sans-serif;
 }
 
 #root {
@@ -18,4 +20,63 @@ body {
   padding: 0;
   margin: 0;
   text-align: left;
+}
+
+/* LANDING PAGE STYLES */
+.landing-container {
+  height: 100vh;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: radial-gradient(circle at top right, #1e293b, #0f172a);
+}
+
+.landing-card {
+  background: rgba(30, 41, 59, 0.7);
+  backdrop-filter: blur(20px);
+  padding: 3rem;
+  border-radius: 24px;
+  border: 1px solid rgba(255, 255, 255, 0.1);
+  box-shadow: 0 25px 50px -12px rgba(0, 0, 0, 0.5);
+  text-align: center;
+  max-width: 450px;
+  width: 90%;
+  animation: fadeIn 0.8s ease-out;
+}
+
+.room-input {
+  width: 100%;
+  padding: 15px;
+  margin: 20px 0;
+  background: rgba(15, 23, 42, 0.5);
+  border: 2px solid #334155;
+  border-radius: 12px;
+  color: white;
+  font-size: 1.1rem;
+  text-align: center;
+  transition: all 0.3s ease;
+  outline: none;
+}
+
+.room-input:focus {
+  border-color: #3b82f6;
+  box-shadow: 0 0 15px rgba(59, 130, 246, 0.3);
+}
+
+.join-btn {
+  width: 100%;
+  padding: 15px;
+  background: #3b82f6;
+  color: white;
+  border: none;
+  border-radius: 12px;
+  font-weight: 700;
+  font-size: 1rem;
+  cursor: pointer;
+  transition: transform 0.2s, background 0.3s;
+}
+
+@keyframes fadeIn {
+  from { opacity: 0; transform: scale(0.95); }
+  to { opacity: 1; transform: scale(1); }
 }

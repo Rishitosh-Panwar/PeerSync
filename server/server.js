@@ -1,26 +1,29 @@
+require("dotenv").config(); // Must be first to load API keys
 const express = require("express");
 const http = require("http");
 const { Server } = require("socket.io");
 const cors = require("cors");
 const mongoose = require("mongoose");
-const { GoogleGenAI } = require("@google/genai");
-require("dotenv").config();
+const { GoogleGenerativeAI } = require("@google/generative-ai");
+
+// Route Imports
+const videoRoutes = require('./routes/videoRoutes');
+const authRoutes = require("./routes/auth");
 
 const app = express();
 const server = http.createServer(app);
 
 /* ========================
-   Middleware
+   1. Middleware 
 ======================== */
+app.use(express.json()); // Essential for parsing JSON bodies from Postman/Frontend
 app.use(cors({
-  origin: "*",
+  origin: "*", // Allows Docker containers and local dev to communicate
   credentials: true
 }));
 
-app.use(express.json());
-
 /* ========================
-   MongoDB Connection
+   2. MongoDB Connection
 ======================== */
 mongoose.connect(process.env.MONGO_URI, {
   serverSelectionTimeoutMS: 5000
@@ -29,64 +32,46 @@ mongoose.connect(process.env.MONGO_URI, {
 .catch(err => console.error("❌ MongoDB Error:", err.message));
 
 /* ========================
-   Start Server
+   3. Gemini AI Setup
 ======================== */
-const PORT = process.env.PORT || 3000;
-
-server.listen(PORT, () => {
-  console.log(`🚀 PeerSync Backend live on port ${PORT}`);
-});
+const genAI = new GoogleGenerativeAI(process.env.GEMINI_API_KEY);
+const aiModel = genAI.getGenerativeModel({ model: "gemini-2.0-flash" });
 
 /* ========================
-   Routes
+   4. API Routes
 ======================== */
-app.use("/api/auth", require("./routes/auth"));
 
-/* ========================
-   Gemini Setup (NEW SDK)
-======================== */
-const genAI = new GoogleGenAI({
-  apiKey: process.env.GEMINI_API_KEY
-});
+// Video and Auth Routes
+app.use('/api/video', videoRoutes);
+app.use("/api/auth", authRoutes);
 
-/* ========================
-   Summarize Endpoint
-======================== */
+// Gemini Summarize Endpoint
 app.post("/api/summarize", async (req, res) => {
   try {
     const { chatHistory = [], code = "" } = req.body;
     const trimmedChat = chatHistory.slice(-20);
 
     const prompt = `
-Analyze the following study session.
+      Analyze the following study session.
+      Chat: ${JSON.stringify(trimmedChat)}
+      Code: ${code}
+      Return ONLY valid JSON:
+      {
+        "summary": "One paragraph summary",
+        "flashcards": [
+          { "question": "string", "answer": "string" }
+        ]
+      }
+    `;
 
-Chat:
-${JSON.stringify(trimmedChat)}
+    const result = await aiModel.generateContent(prompt);
+    const response = await result.response;
+    let text = response.text().trim();
 
-Code:
-${code}
-
-Return ONLY valid JSON:
-{
-  "summary": "One paragraph summary",
-  "flashcards": [
-    { "question": "string", "answer": "string" }
-  ]
-}
-`;
-
-    const result = await genAI.models.generateContent({
-      model: "gemini-2.0-flash",
-      contents: prompt
-    });
-
-    let text = result.text.trim();
-
-    // Remove markdown wrapping if model adds it
+    // Clean markdown code blocks if the AI includes them
     text = text.replace(/```json|```/g, "").trim();
 
     res.json(JSON.parse(text));
-
   } catch (error) {
     console.error("❌ Gemini Error:", error.message);
     res.status(500).json({ error: "AI Generation Failed" });
@@ -94,7 +79,7 @@ Return ONLY valid JSON:
 });
 
 /* ========================
-   Socket.IO Setup
+   5. Socket.IO (Real-time Sync)
 ======================== */
 const io = new Server(server, {
   cors: {
@@ -103,20 +88,16 @@ const io = new Server(server, {
   }
 });
 
-// Room-specific code storage
-const roomCode = {};
+const roomCode = {}; // Temporary in-memory storage for room code
 
 io.on("connection", (socket) => {
-
   console.log(`🔌 User connected: ${socket.id}`);
 
   socket.on("join_room", ({ roomId }) => {
     socket.join(roomId);
-
     if (!roomCode[roomId]) {
       roomCode[roomId] = "";
     }
-
     socket.emit("initial_code", roomCode[roomId]);
   });
 
@@ -132,4 +113,12 @@ io.on("connection", (socket) => {
   socket.on("disconnect", () => {
     console.log(`❌ User disconnected: ${socket.id}`);
   });
+});
+
+/* ========================
+   6. Start Server
+======================== */
+const PORT = process.env.PORT || 5000; // Using 5000 to match Docker config
+server.listen(PORT, () => {
+  console.log(`🚀 PeerSync Backend live on port ${PORT}`);
 });

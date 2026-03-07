@@ -1,0 +1,21 @@
+services:
+  backend:
+    build: ./server
+    ports:
+      - "5000:5000"
+    env_file: ./server/.env
+    networks:
+      - peersync-network
+
+  frontend:
+    build: ./client
+    ports:
+      - "5173:5173"
+    environment:
+      - VITE_BACKEND_URL=http://localhost:5000
+    networks:
+      - peersync-network
+
+networks:
+  peersync-network:
+    driver: bridge
