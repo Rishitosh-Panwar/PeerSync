@@ -1,10 +1,63 @@
-#root {
-  max-width: 1280px;
-  margin: 0 auto;
-  padding: 2rem;
-  text-align: center;
+/* GLASSMORPHISM SUMMARY WINDOW (ChatGPT Style) */
+.ai-summary-window {
+  position: absolute;
+  bottom: 30px;
+  left: 30px;
+  right: 30px;
+  background: rgba(30, 41, 59, 0.85); /* Frosty Slate */
+  backdrop-filter: blur(12px);
+  -webkit-backdrop-filter: blur(12px);
+  border: 1px solid rgba(255, 255, 255, 0.1);
+  border-top: 4px solid #3b82f6;
+  border-radius: 16px;
+  padding: 24px;
+  box-shadow: 0 25px 50px -12px rgba(0, 0, 0, 0.5);
+  animation: slideUp 0.4s cubic-bezier(0.16, 1, 0.3, 1);
+  z-index: 1000;
 }
 
+@keyframes slideUp {
+  from { transform: translateY(30px); opacity: 0; }
+  to { transform: translateY(0); opacity: 1; }
+}
+
+.summary-heading {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  font-size: 1.25rem;
+  font-weight: 700;
+  color: #3b82f6;
+  margin-bottom: 12px;
+}
+
+/* YOUTUBE RECOMMENDATION CARD */
+.yt-card {
+  background: rgba(15, 23, 42, 0.6);
+  border-left: 4px solid #ef4444; 
+  border-radius: 12px;
+  padding: 16px;
+  margin-top: 20px;
+  transition: all 0.3s ease;
+}
+
+.yt-card:hover {
+  transform: translateY(-2px);
+  background: rgba(15, 23, 42, 0.8);
+}
+
+/* EDITOR STATES (Visual feedback for Driver/Navigator) */
+.editor-active {
+  border-left: 4px solid #22c55e !important; /* Green glow for driver */
+  transition: border 0.3s ease;
+}
+
+.editor-read-only {
+  opacity: 0.85;
+  filter: saturate(0.8);
+}
+
+/* KEEPING LEGACY LOGO STYLES FOR THE LANDING PAGE */
 .logo {
   height: 6em;
   padding: 1.5em;
@@ -12,31 +65,19 @@
   transition: filter 300ms;
 }
 .logo:hover {
-  filter: drop-shadow(0 0 2em #646cffaa);
+  filter: drop-shadow(0 0 2em #3b82f6aa);
 }
 .logo.react:hover {
   filter: drop-shadow(0 0 2em #61dafbaa);
 }
 
 @keyframes logo-spin {
-  from {
-    transform: rotate(0deg);
-  }
-  to {
-    transform: rotate(360deg);
-  }
+  from { transform: rotate(0deg); }
+  to { transform: rotate(360deg); }
 }
 
 @media (prefers-reduced-motion: no-preference) {
   a:nth-of-type(2) .logo {
     animation: logo-spin infinite 20s linear;
   }
-}
-
-.card {
-  padding: 2em;
-}
-
-.read-the-docs {
-  color: #888;
 }
