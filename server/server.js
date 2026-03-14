@@ -1,19 +1,32 @@
+<<<<<<< HEAD
 require("dotenv").config();
+=======
+require("dotenv").config(); // Must be first to load API keys
+>>>>>>> 79673486202ef0ecd46bdb24477c3cf41c718e4b
 const express = require("express");
 const http = require("http");
 const { Server } = require("socket.io");
 const cors = require("cors");
 const mongoose = require("mongoose");
+<<<<<<< HEAD
 const axios = require("axios"); 
 const jwt = require("jsonwebtoken");
 const { GoogleGenerativeAI } = require("@google/generative-ai");
 
 // Import your verified models
 const { User, Room, SessionLog } = require("./models"); 
+=======
+const { GoogleGenerativeAI } = require("@google/generative-ai");
+
+// Route Imports
+const videoRoutes = require('./routes/videoRoutes');
+const authRoutes = require("./routes/auth");
+>>>>>>> 79673486202ef0ecd46bdb24477c3cf41c718e4b
 
 const app = express();
 const server = http.createServer(app);
 
+<<<<<<< HEAD
 app.use(express.json());
 
 // FIXED CORS: Added strict matching for Vite ports
@@ -29,9 +42,46 @@ mongoose.connect(process.env.MONGO_URI)
 
 // --- 1. JITSI JWT GENERATION (8x8 JaaS Fix) ---
 app.get("/api/jitsi-token", (req, res) => {
+=======
+/* ========================
+   1. Middleware 
+======================== */
+app.use(express.json()); // Essential for parsing JSON bodies from Postman/Frontend
+app.use(cors({
+  origin: "*", // Allows Docker containers and local dev to communicate
+  credentials: true
+}));
+
+/* ========================
+   2. MongoDB Connection
+======================== */
+mongoose.connect(process.env.MONGO_URI, {
+  serverSelectionTimeoutMS: 5000
+})
+.then(() => console.log("✅ MongoDB Atlas Connected!"))
+.catch(err => console.error("❌ MongoDB Error:", err.message));
+
+/* ========================
+   3. Gemini AI Setup
+======================== */
+const genAI = new GoogleGenerativeAI(process.env.GEMINI_API_KEY);
+const aiModel = genAI.getGenerativeModel({ model: "gemini-2.0-flash" });
+
+/* ========================
+   4. API Routes
+======================== */
+
+// Video and Auth Routes
+app.use('/api/video', videoRoutes);
+app.use("/api/auth", authRoutes);
+
+// Gemini Summarize Endpoint
+app.post("/api/summarize", async (req, res) => {
+>>>>>>> 79673486202ef0ecd46bdb24477c3cf41c718e4b
   try {
     if (!process.env.JITSI_PRIVATE_KEY) throw new Error("Private Key missing in .env");
 
+<<<<<<< HEAD
     const privateKey = process.env.JITSI_PRIVATE_KEY.replace(/\\n/g, '\n');
     const appId = "vpaas-magic-cookie-8f291ebf52794eb5896baaed63b01738";
     const keyId = "vpaas-magic-cookie-8f291ebf52794eb5896baaed63b01738/129679";
@@ -56,6 +106,29 @@ app.get("/api/jitsi-token", (req, res) => {
     });
 
     res.json({ token });
+=======
+    const prompt = `
+      Analyze the following study session.
+      Chat: ${JSON.stringify(trimmedChat)}
+      Code: ${code}
+      Return ONLY valid JSON:
+      {
+        "summary": "One paragraph summary",
+        "flashcards": [
+          { "question": "string", "answer": "string" }
+        ]
+      }
+    `;
+
+    const result = await aiModel.generateContent(prompt);
+    const response = await result.response;
+    let text = response.text().trim();
+
+    // Clean markdown code blocks if the AI includes them
+    text = text.replace(/```json|```/g, "").trim();
+
+    res.json(JSON.parse(text));
+>>>>>>> 79673486202ef0ecd46bdb24477c3cf41c718e4b
   } catch (error) {
     console.error("❌ JWT Error:", error.message);
     res.status(500).json({ error: "Failed to generate Jitsi Token" });
@@ -146,6 +219,7 @@ app.post("/api/summarize", async (req, res) => {
   }
 });
 
+<<<<<<< HEAD
 // --- 5. SOCKET.IO (COLLABORATION & TOKEN PASSING) ---
 const io = new Server(server, { 
   cors: { origin: ["http://localhost:5173", "http://localhost:5174"] } 
@@ -167,6 +241,29 @@ io.on("connection", (socket) => {
     }
     socket.emit("initial_code", activeRooms[roomId].code);
     io.to(roomId).emit("token_passed", activeRooms[roomId].driver);
+=======
+/* ========================
+   5. Socket.IO (Real-time Sync)
+======================== */
+const io = new Server(server, {
+  cors: {
+    origin: "*",
+    methods: ["GET", "POST"]
+  }
+});
+
+const roomCode = {}; // Temporary in-memory storage for room code
+
+io.on("connection", (socket) => {
+  console.log(`🔌 User connected: ${socket.id}`);
+
+  socket.on("join_room", ({ roomId }) => {
+    socket.join(roomId);
+    if (!roomCode[roomId]) {
+      roomCode[roomId] = "";
+    }
+    socket.emit("initial_code", roomCode[roomId]);
+>>>>>>> 79673486202ef0ecd46bdb24477c3cf41c718e4b
   });
 
   // Code Sync
@@ -230,5 +327,15 @@ io.on("connection", (socket) => {
   });
 });
 
+<<<<<<< HEAD
 const PORT = 5000;
 server.listen(PORT, "0.0.0.0", () => console.log(`🚀 Backend live on port ${PORT}`));
+=======
+/* ========================
+   6. Start Server
+======================== */
+const PORT = process.env.PORT || 5000; // Using 5000 to match Docker config
+server.listen(PORT, () => {
+  console.log(`🚀 PeerSync Backend live on port ${PORT}`);
+});
+>>>>>>> 79673486202ef0ecd46bdb24477c3cf41c718e4b
