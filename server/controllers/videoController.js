@@ -1,42 +1,33 @@
-const { HfInference } = require("@huggingface/inference");
+const { GoogleGenerativeAI } = require("@google/generative-ai");
 
 exports.processSessionAI = async (req, res) => {
     try {
-        const { transcript } = req.body;
+        const { transcript, code } = req.body;
 
-        // Verify token exists before calling API
-        if (!process.env.HF_TOKEN) {
-            console.error("❌ CRITICAL: HF_TOKEN is missing from .env");
-            return res.status(500).json({ error: "Server configuration error: missing API key" });
+        if (!process.env.GEMINI_API_KEY) {
+            return res.status(500).json({ error: "Missing GEMINI_API_KEY in .env" });
         }
 
-        const hf = new HfInference(process.env.HF_TOKEN);
-
-        // 1. Generate Summary
-        const summaryResponse = await hf.summarization({
-            model: 'facebook/bart-large-cnn',
-            inputs: transcript,
-            parameters: { max_length: 150 }
+        const genAI = new GoogleGenerativeAI(process.env.GEMINI_API_KEY);
+        const model = genAI.getGenerativeModel({ 
+            model: "gemini-1.5-flash-latest",
+            generationConfig: { responseMimeType: "application/json" }
         });
 
-        // 2. Generate Flashcards
-        const flashcardPrompt = `Transcript: ${transcript} \n\n Create 3 short study flashcards in Q&A format.`;
-        const flashcardsResponse = await hf.textGeneration({
-            model: 'mistralai/Mistral-7B-Instruct-v0.2',
-            inputs: flashcardPrompt,
-            parameters: { max_new_tokens: 200 }
-        });
+        const prompt = `
+            Analyze this session.
+            Transcript of conversation: ${transcript || "No speech recorded."}
+            Code written: ${code || "No code written."}
 
-        res.status(200).json({
-            summary: summaryResponse.summary_text,
-            flashcards: flashcardsResponse.generated_text
-        });
+            Return JSON with:
+            1. "summary": A concise overview.
+            2. "flashcards": Array of 3 objects with "question" and "answer".
+        `;
+
+        const result = await model.generateContent(prompt);
+        res.status(200).json(JSON.parse(result.response.text()));
     } catch (error) {
-        // Detailed logging to help you see the exact Hugging Face error in Docker
-        console.error("AI Error Detail:", error.message);
-        res.status(500).json({ 
-            error: "AI failed to process session",
-            message: error.message // Sending message back to Postman for easier debugging
-        });
+        console.error("AI Error:", error.message);
+        res.status(500).json({ error: "AI failed", message: error.message });
     }
 };
