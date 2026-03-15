@@ -6,6 +6,8 @@ services:
     env_file: ./server/.env
     networks:
       - peersync-network
+    depends_on:
+      - piston
 
   frontend:
     build: ./client
@@ -16,6 +18,25 @@ services:
     networks:
       - peersync-network
 
+  piston:
+    image: ghcr.io/engineer-man/piston:latest
+    container_name: piston_api
+    restart: always
+    privileged: true
+    ports:
+      - "2000:2000" 
+    volumes:
+      - piston-data:/piston/packages
+    tmpfs:
+      - /tmp:exec,size=1000M
+    networks:
+      peersync-network:
+        aliases:
+          - piston # This ensures the backend can find it at http://piston:2000
+
 networks:
   peersync-network:
     driver: bridge
+
+volumes:
+  piston-data:
