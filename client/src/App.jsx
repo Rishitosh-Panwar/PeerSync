@@ -5,13 +5,37 @@ import { useParams, useNavigate } from 'react-router-dom';
 import Draggable from 'react-draggable';
 import jsPDF from 'jspdf'; 
 import axios from 'axios';
-import './index.css';
+import './App.css';
 
-const BACKEND_URL = "http://localhost:5000";
+// Get backend URL from environment variable
+const BACKEND_URL = import.meta.env.VITE_BACKEND_URL || "http://localhost:5000";
+
+console.log('🔗 Connecting to backend at:', BACKEND_URL);
+
+// Create axios instance with better error handling
+const api = axios.create({
+  baseURL: BACKEND_URL,
+  headers: {
+    "Bypass-Tunnel-Reminder": "true",
+    "Content-Type": "application/json"
+  },
+  withCredentials: true,
+  timeout: 15000
+});
+
+// Socket with multiple transport fallbacks
 const socket = io(BACKEND_URL, { 
-    transports: ['websocket'], 
+    transports: ['websocket', 'polling'],
     withCredentials: true,
-    reconnectionAttempts: 5 
+    reconnectionAttempts: 10,
+    reconnectionDelay: 1000,
+    reconnectionDelayMax: 5000,
+    timeout: 20000,
+    autoConnect: true,
+    forceNew: true,
+    extraHeaders: {
+        "Bypass-Tunnel-Reminder": "true"
+    }
 });
 
 const starterCode = {
@@ -39,33 +63,105 @@ export default function App() {
     const [currentSentence, setCurrentSentence] = useState("");
     const [remoteSubtitle, setRemoteSubtitle] = useState("");
     const [output, setOutput] = useState("");
-    const [speechLang, setSpeechLang] = useState("hi-IN");
+    const [speechLang, setSpeechLang] = useState("en-US");
     const [jitsiToken, setJitsiToken] = useState("");
-    const [jitsiActive, setJitsiActive] = useState(true);
+    const [jitsiActive, setJitsiActive] = useState(false);
+    const [jitsiError, setJitsiError] = useState(false);
 
     const [showAIOverlay, setShowAIOverlay] = useState(false);
     const [aiData, setAiData] = useState(null);
     const [isVideoMaximized, setIsVideoMaximized] = useState(false);
-    const [driverRequest, setDriverRequest] = useState(null);
+    const [driverName, setDriverName] = useState("Anonymous");
+    const [activeTab, setActiveTab] = useState('logic');
+    const [currentFlashcardIndex, setCurrentFlashcardIndex] = useState(0);
+    const [notifications, setNotifications] = useState([]);
+    const [connectionStatus, setConnectionStatus] = useState('connecting');
+    const [transportType, setTransportType] = useState('unknown');
 
-    // --- 1. Fetch Jitsi JWT ---
+    // Check if user is authenticated
+    useEffect(() => {
+        const token = localStorage.getItem('token');
+        if (!token) {
+            navigate('/');
+        }
+    }, [navigate]);
+
+    // Monitor socket connection
+    useEffect(() => {
+        console.log('Setting up socket connection...');
+        
+        const onConnect = () => {
+            const transport = socket.io.engine.transport.name;
+            console.log('✅ Socket connected! Transport:', transport);
+            setConnectionStatus('connected');
+            setTransportType(transport);
+            addNotification('success', `Connected via ${transport}`);
+        };
+
+        const onConnectError = (error) => {
+            console.error('❌ Socket connection error:', error.message);
+            setConnectionStatus('error');
+            addNotification('error', 'Connection failed - retrying...');
+            
+            // Try switching transport
+            if (socket.io.engine.transport.name === 'websocket') {
+                console.log('Switching to polling transport...');
+                socket.io.opts.transports = ['polling', 'websocket'];
+            }
+        };
+
+        const onDisconnect = (reason) => {
+            console.log('Socket disconnected:', reason);
+            setConnectionStatus('disconnected');
+            addNotification('warning', 'Disconnected from server');
+        };
+
+        const onReconnect = (attempt) => {
+            console.log('Socket reconnected after', attempt, 'attempts');
+            setConnectionStatus('connected');
+            addNotification('success', 'Reconnected to server');
+        };
+
+        socket.on('connect', onConnect);
+        socket.on('connect_error', onConnectError);
+        socket.on('disconnect', onDisconnect);
+        socket.on('reconnect', onReconnect);
+
+        return () => {
+            socket.off('connect', onConnect);
+            socket.off('connect_error', onConnectError);
+            socket.off('disconnect', onDisconnect);
+            socket.off('reconnect', onReconnect);
+        };
+    }, []);
+
+    // Fetch Jitsi token
     useEffect(() => {
         const getJitsiToken = async () => {
             try {
-                const res = await axios.get(`${BACKEND_URL}/api/jitsi-token`);
+                console.log('Fetching Jitsi token...');
+                const res = await api.get('/api/jitsi-token');
+                console.log('✅ Jitsi token received');
                 setJitsiToken(res.data.token);
             } catch (err) {
-                console.error("❌ JWT Fetch Failed:", err);
+                console.error("❌ JWT Fetch Failed:", err.message);
+                if (err.code === 'ECONNABORTED') {
+                    addNotification('error', 'Request timeout - check backend');
+                } else {
+                    addNotification('error', 'Failed to initialize video call');
+                }
+                setJitsiError(true);
             }
         };
         getJitsiToken();
     }, []);
 
-    // --- 2. Speech Recognition ---
+    // Speech Recognition
     useEffect(() => {
         const SpeechRecognition = window.SpeechRecognition || window.webkitSpeechRecognition;
         if (SpeechRecognition) {
             if (recognitionRef.current) recognitionRef.current.stop();
+            
             recognitionRef.current = new SpeechRecognition();
             recognitionRef.current.continuous = true;
             recognitionRef.current.interimResults = true;
@@ -77,132 +173,205 @@ export default function App() {
                     const resultText = event.results[i][0].transcript;
                     if (event.results[i].isFinal) {
                         setTranscript(prev => prev + " " + resultText);
-                        socket.emit("send_subtitle", { roomId, text: resultText, isFinal: true });
+                        if (socket.connected) {
+                            socket.emit("send_caption", { roomId, text: resultText });
+                        }
                         setCurrentSentence(""); 
                     } else {
                         interimTranscript += resultText;
                         setCurrentSentence(interimTranscript);
-                        socket.emit("send_subtitle", { roomId, text: interimTranscript, isFinal: false });
                     }
                 }
             };
-            if (isListening) try { recognitionRef.current.start(); } catch(e) {}
-        }
-        return () => { if (recognitionRef.current) recognitionRef.current.stop(); };
-    }, [speechLang, isListening, roomId]);
 
-    const toggleSpeech = () => setIsListening(!isListening);
-
-    // --- 3. Jitsi & Socket ---
-    const initJitsi = () => {
-        if (window.JitsiMeetExternalAPI && jitsiContainerRef.current && jitsiToken) {
-            setJitsiActive(true);
-            const domain = "8x8.vc"; 
-            const options = {
-                roomName: `vpaas-magic-cookie-8f291ebf52794eb5896baaed63b01738/PeerSyncRoom-${roomId}`,
-                jwt: jitsiToken,
-                width: "100%", 
-                height: "100%",
-                parentNode: jitsiContainerRef.current,
-                configOverwrite: { prejoinPageEnabled: false },
-                interfaceConfigOverwrite: { TILE_VIEW_MAX_COLUMNS: 2 }
+            recognitionRef.current.onerror = (event) => {
+                console.error("Speech recognition error:", event.error);
+                setIsListening(false);
             };
 
-            jitsiApiRef.current = new window.JitsiMeetExternalAPI(domain, options);
-            
-            // Handle black screen on cut call
-            jitsiApiRef.current.addEventListeners({
-                videoConferenceLeft: () => {
-                    setJitsiActive(false);
-                    if (jitsiApiRef.current) jitsiApiRef.current.dispose();
+            if (isListening && socket.connected) {
+                try { 
+                    recognitionRef.current.start(); 
+                } catch(e) { 
+                    console.error(e);
+                    setIsListening(false);
                 }
-            });
+            }
+        }
+        return () => { 
+            if (recognitionRef.current) {
+                try {
+                    recognitionRef.current.stop();
+                } catch(e) {}
+            }
+        };
+    }, [speechLang, isListening, roomId]);
+
+    // Jitsi initialization
+    const initJitsi = () => {
+        if (window.JitsiMeetExternalAPI && jitsiContainerRef.current && jitsiToken) {
+            try {
+                setJitsiActive(true);
+                const domain = "8x8.vc"; 
+                const options = {
+                    roomName: `vpaas-magic-cookie-8f291ebf52794eb5896baaed63b01738/PeerSyncRoom-${roomId}`,
+                    jwt: jitsiToken,
+                    width: "100%", 
+                    height: "100%",
+                    parentNode: jitsiContainerRef.current,
+                    configOverwrite: { 
+                        prejoinPageEnabled: false,
+                        startWithAudioMuted: true,
+                        startWithVideoMuted: true
+                    },
+                    interfaceConfigOverwrite: { 
+                        TILE_VIEW_MAX_COLUMNS: 2,
+                        SHOW_JITSI_WATERMARK: false
+                    }
+                };
+
+                jitsiApiRef.current = new window.JitsiMeetExternalAPI(domain, options);
+                
+                jitsiApiRef.current.addEventListeners({
+                    videoConferenceLeft: () => {
+                        setJitsiActive(false);
+                        if (jitsiApiRef.current) jitsiApiRef.current.dispose();
+                    },
+                    videoConferenceJoined: () => {
+                        console.log('Jitsi conference joined');
+                        addNotification('success', 'Video call connected');
+                    }
+                });
+            } catch (error) {
+                console.error('Jitsi error:', error);
+                setJitsiError(true);
+            }
         }
     };
 
+    // Room and socket setup
     useEffect(() => {
-        if (jitsiToken) {
+        if (jitsiToken && roomId && socket.connected) {
             initJitsi();
-            socket.emit('join_room', { roomId });
             
-            socket.on('initial_code', (savedCode) => setCode(savedCode));
-            socket.on('code_update', (newCode) => setCode(newCode));
-            socket.on('token_passed', (driverId) => setIsDriver(socket.id === driverId));
+            const myName = localStorage.getItem('userName') || "User_" + Math.floor(Math.random() * 1000);
+            socket.emit('join_room', { roomId, userName: myName });
             
-            socket.on('receive_subtitle', (data) => {
-                setRemoteSubtitle(data.text);
-                if(data.isFinal) setTimeout(() => setRemoteSubtitle(""), 4000);
-            });
-            
-            socket.on('driver_request_received', ({ requesterId, requesterName }) => {
-                setDriverRequest({ requesterId, requesterName });
-            });
+            // Request driver info
+            setTimeout(() => {
+                socket.emit('request_driver_info', { roomId });
+            }, 500);
 
-            socket.on('receive_summary', (data) => {
+            // Socket listeners
+            const onInitialCode = (savedCode) => setCode(savedCode);
+            const onCodeUpdate = (newCode) => setCode(newCode);
+            const onDriverChanged = ({ driverId, driverName: newDriverName }) => {
+                setIsDriver(socket.id === driverId);
+                setDriverName(newDriverName);
+                addNotification('info', socket.id === driverId ? '👑 You are driver!' : `👤 ${newDriverName} is driver`);
+            };
+            const onReceiveCaption = (data) => {
+                setRemoteSubtitle(speechLang.startsWith('hi') ? data.hi : data.en);
+                setTimeout(() => setRemoteSubtitle(""), 4000);
+            };
+            const onReceiveSummary = (data) => {
                 setAiData(data);
                 setShowAIOverlay(true);
-            });
+                setActiveTab('logic');
+                addNotification('success', '📚 AI Summary generated!');
+            };
+            const onReceiveOutput = (remoteOutput) => setOutput(remoteOutput);
+            const onReceiveLanguage = (lang) => setLanguage(lang);
 
-            socket.on('receive_output', (remoteOutput) => {
-                setOutput(remoteOutput);
-            });
-
-            socket.on('receive_language', (lang) => {
-                setLanguage(lang);
-            });
-
-            socket.on('receive_layout', (maximized) => {
-                setIsVideoMaximized(maximized);
-            });
+            socket.on('initial_code', onInitialCode);
+            socket.on('code_update', onCodeUpdate);
+            socket.on('driver_changed', onDriverChanged);
+            socket.on('receive_caption', onReceiveCaption);
+            socket.on('receive_summary', onReceiveSummary);
+            socket.on('receive_output', onReceiveOutput);
+            socket.on('receive_language', onReceiveLanguage);
 
             return () => { 
-                socket.off(); 
+                socket.off('initial_code', onInitialCode);
+                socket.off('code_update', onCodeUpdate);
+                socket.off('driver_changed', onDriverChanged);
+                socket.off('receive_caption', onReceiveCaption);
+                socket.off('receive_summary', onReceiveSummary);
+                socket.off('receive_output', onReceiveOutput);
+                socket.off('receive_language', onReceiveLanguage);
                 if (jitsiApiRef.current) jitsiApiRef.current.dispose(); 
             };
         }
-    }, [roomId, jitsiToken]);
+    }, [roomId, jitsiToken, socket.connected, speechLang]);
+
+    // Add notification helper
+    const addNotification = (type, message) => {
+        const id = Date.now();
+        setNotifications(prev => [...prev, { id, type, message }]);
+        setTimeout(() => {
+            setNotifications(prev => prev.filter(n => n.id !== id));
+        }, 3000);
+    };
 
     const runCode = async () => {
         setIsRunning(true);
-        setOutput("🚀 PeerSync Engine running...");
+        setOutput("🚀 Running...");
         try {
-            const res = await axios.post(`${BACKEND_URL}/api/execute`, { language, code });
-            // FIXED PARSING FOR PISTON
-            const result = res.data.run?.output || res.data.run?.stdout || res.data.output || "No output.";
+            const res = await api.post('/api/execute', { language, code });
+            const result = res.data.output || "No output.";
             setOutput(result);
-            socket.emit("share_output", { roomId, output: result });
+            if (socket.connected) {
+                socket.emit("share_output", { roomId, output: result });
+            }
+            addNotification('success', 'Code executed');
         } catch (error) { 
-            const errorMsg = error.response?.data?.error || "Code Execution Engine busy.";
-            setOutput(`❌ Error: ${errorMsg}`);
-        } finally { setIsRunning(false); }
+            setOutput(`❌ Error: ${error.response?.data?.error || error.message}`);
+            addNotification('error', 'Execution failed');
+        } finally { 
+            setIsRunning(false); 
+        }
     };
 
     const generateNotes = async () => {
         setIsGenerating(true);
         try {
-            const response = await axios.post(`${BACKEND_URL}/api/summarize`, { roomId, transcript, code });
+            const response = await api.post('/api/summarize', { roomId, transcript, code });
             if (response.data) {
                 setAiData(response.data);
                 setShowAIOverlay(true);
-                socket.emit("share_summary", { roomId, aiData: response.data });
+                if (socket.connected) {
+                    socket.emit("share_summary", { roomId, aiData: response.data });
+                }
+                addNotification('success', 'AI Summary ready');
             }
         } catch (error) { 
             setOutput("❌ AI failed."); 
-        } finally { setIsGenerating(false); }
+            addNotification('error', 'AI summary failed');
+        } finally { 
+            setIsGenerating(false); 
+        }
     };
 
     const handleLanguageChange = (newLang) => {
         if (isDriver) {
             setLanguage(newLang);
-            setCode(starterCode[newLang]); 
-            socket.emit("language_change", { roomId, language: newLang });
+            setCode(starterCode[newLang] || code); 
+            if (socket.connected) {
+                socket.emit("language_change", { roomId, language: newLang });
+            }
         }
     };
 
     const handleLayoutToggle = () => {
-        const newState = !isVideoMaximized;
-        setIsVideoMaximized(newState);
-        socket.emit("sync_layout", { roomId, isVideoMaximized: newState });
+    setIsVideoMaximized(!isVideoMaximized);
+    };
+
+    const requestToDrive = () => {
+        const name = prompt("Enter your name:", localStorage.getItem('userName') || "PeerSync Coder");
+        if (name && socket.connected) {
+            localStorage.setItem('userName', name);
+            socket.emit("claim_driver", { roomId, name });
+        }
     };
 
     const downloadPDF = () => {
@@ -214,54 +383,137 @@ export default function App() {
         doc.text(`Language: ${language}`, 10, 30);
         doc.text("Logic Explanation:", 10, 40);
         doc.text(aiData.logic || aiData.summary || "No data", 10, 50, { maxWidth: 180 });
+        
+        if (aiData.flashcards?.length) {
+            doc.addPage();
+            doc.setFontSize(16);
+            doc.text("Practice Questions", 10, 20);
+            doc.setFontSize(12);
+            let yPos = 40;
+            aiData.flashcards.forEach((card, index) => {
+                if (yPos > 280) {
+                    doc.addPage();
+                    yPos = 40;
+                }
+                doc.text(`Q${index + 1}: ${card.q || card.question}`, 10, yPos);
+                doc.text(`A: ${card.a || card.answer}`, 10, yPos + 15);
+                yPos += 40;
+            });
+        }
         doc.save("PeerSync_Notes.pdf");
     };
 
-    const requestToDrive = () => {
-        const userName = prompt("Enter your name to request control:") || "Someone";
-        socket.emit("request_driver", { roomId, requesterName: userName });
-    };
-
-    const handleAcceptRequest = () => {
-        socket.emit("accept_driver_request", { roomId, requesterId: driverRequest.requesterId });
-        setDriverRequest(null);
-    };
+    // Connection error screen
+    if (connectionStatus === 'error' && !socket.connected) {
+        return (
+            <div className="connection-error">
+                <h2>🔌 Connection Error</h2>
+                <p>Unable to connect to server at:</p>
+                <code>{BACKEND_URL}</code>
+                <p>Please check:</p>
+                <ul>
+                    <li>Backend is running (node server.js)</li>
+                    <li>Tunnel is active (cloudflared)</li>
+                    <li>URL in .env is correct</li>
+                </ul>
+                <button onClick={() => window.location.reload()}>Refresh Page</button>
+            </div>
+        );
+    }
 
     return (
-        <div style={{ width: '100%', height: '100vh', display: 'flex', background: '#0f172a', overflow: 'hidden' }}>
-            <div style={{ flex: 1, display: 'flex', flexDirection: 'column', position: 'relative', borderRight: '2px solid #334155' }}>
-                <div style={{ padding: '10px', display: 'flex', gap: '10px', background: '#1e293b', alignItems: 'center' }}>
-                    <div style={{ color: '#3b82f6', fontWeight: 'bold' }}>PeerSync Lab</div>
-                    <button onClick={toggleSpeech} style={{ background: isListening ? '#ef4444' : '#3b82f6', color: 'white', padding: '5px 15px', borderRadius: '4px', border: 'none', cursor: 'pointer' }}>
-                        {isListening ? '🛑 Mic On' : '🎤 Mic Off'}
-                    </button>
-                    <select value={language} onChange={(e) => handleLanguageChange(e.target.value)} style={{ padding: '5px', borderRadius: '4px' }} disabled={!isDriver}>
+        <div className="app-container">
+            {/* Connection Status Bar */}
+            <div className="status-bar">
+                <div className={`connection-status ${connectionStatus}`}>
+                    {connectionStatus === 'connected' && `🟢 Connected (${transportType})`}
+                    {connectionStatus === 'connecting' && '🟡 Connecting...'}
+                    {connectionStatus === 'disconnected' && '🔴 Disconnected'}
+                    {connectionStatus === 'error' && '🔴 Connection Error'}
+                </div>
+                <div className="backend-url">
+                    {BACKEND_URL}
+                </div>
+            </div>
+
+            {/* Notifications */}
+            <div className="notification-container">
+                {notifications.map(notif => (
+                    <div key={notif.id} className={`notification ${notif.type}`}>
+                        {notif.message}
+                    </div>
+                ))}
+            </div>
+
+            {/* Rest of your UI remains the same */}
+            <div className="main-workspace">
+                <div className="toolbar">
+                    <div className="logo-text">PeerSync</div>
+                    
+                    <div className="subtitle-controls">
+                        <div className="language-selector">
+                            <span className="selector-label">🌐</span>
+                            <select 
+                                value={speechLang} 
+                                onChange={(e) => setSpeechLang(e.target.value)}
+                                className="speech-lang-select"
+                            >
+                                <option value="en-US">🇺🇸 English</option>
+                                <option value="hi-IN">🇮🇳 हिंदी</option>
+                            </select>
+                        </div>
+                        <button 
+                            onClick={() => setIsListening(!isListening)} 
+                            className={`mic-button ${isListening ? 'active' : ''}`}
+                            disabled={!socket.connected}
+                        >
+                            <span className="button-icon">{isListening ? '⏹️' : '🎙️'}</span>
+                            <span className="button-text">{isListening ? 'Stop' : 'Speak'}</span>
+                        </button>
+                    </div>
+
+                    <select 
+                        value={language} 
+                        onChange={(e) => handleLanguageChange(e.target.value)} 
+                        className="language-select"
+                        disabled={!isDriver}
+                    >
                         <option value="javascript">JavaScript</option>
                         <option value="python">Python</option>
                         <option value="java">Java</option>
                         <option value="cpp">C++</option>
                     </select>
-                    <button onClick={runCode} disabled={isRunning || !isDriver} style={{ background: '#22c55e', color: 'white', padding: '5px 15px', borderRadius: '4px', border: 'none', cursor: 'pointer', opacity: isDriver ? 1 : 0.6 }}>
-                        {isRunning ? "Running..." : "Run Code"}
+                    
+                    <button 
+                        onClick={runCode} 
+                        disabled={isRunning || !isDriver} 
+                        className="run-button"
+                    >
+                        <span className="button-icon">⚡</span>
+                        <span>{isRunning ? "Running..." : "Run Code"}</span>
                     </button>
-                    <button onClick={generateNotes} disabled={isGenerating || !isDriver} style={{ background: '#a855f7', color: 'white', padding: '5px 15px', borderRadius: '4px', border: 'none', cursor: 'pointer', opacity: isDriver ? 1 : 0.6 }}>
-                        {isGenerating ? "Analyzing..." : "Summary"}
+                    
+                    <button 
+                        onClick={generateNotes} 
+                        disabled={isGenerating || !isDriver} 
+                        className="summary-button"
+                    >
+                        <span className="button-icon">🤖</span>
+                        <span>{isGenerating ? "Analyzing..." : "AI Summary"}</span>
                     </button>
+                    
                     {!isDriver ? (
-                        <button onClick={requestToDrive} style={{ background: '#f59e0b', color: 'white', padding: '5px 15px', borderRadius: '4px', border: 'none', cursor: 'pointer' }}>
-                            🎮 Request Control
+                        <button onClick={requestToDrive} className="request-button" disabled={!socket.connected}>
+                            <span className="button-icon">⌨️</span>
+                            <span>Request Control</span>
                         </button>
                     ) : (
-                        <span style={{color: '#22c55e', fontSize: '12px'}}>🌟 You are Driver</span>
-                    )}
-
-                    {isDriver && driverRequest && (
-                        <div style={{ position: 'absolute', top: '60px', right: '20px', background: '#1e293b', border: '2px solid #f59e0b', padding: '15px', borderRadius: '8px', zIndex: 200, color: 'white', boxShadow: '0 4px 15px rgba(0,0,0,0.5)' }}>
-                            <p style={{ margin: '0 0 10px 0' }}>🔔 <strong>{driverRequest.requesterName}</strong> wants control.</p>
-                            <div style={{ display: 'flex', gap: '10px' }}>
-                                <button onClick={handleAcceptRequest} style={{ background: '#22c55e', color: 'white', border: 'none', padding: '5px 10px', borderRadius: '4px', cursor: 'pointer' }}>Accept</button>
-                                <button onClick={() => setDriverRequest(null)} style={{ background: '#ef4444', color: 'white', border: 'none', padding: '5px 10px', borderRadius: '4px', cursor: 'pointer' }}>Decline</button>
-                            </div>
+                        <div className="driver-badge">
+                            <span className="driver-icon">👑</span>
+                            <span className="driver-text">
+                                <span className="driver-label">Driver:</span>
+                                <span className="driver-name">{driverName}</span>
+                            </span>
                         </div>
                     )}
                 </div>
@@ -271,88 +523,124 @@ export default function App() {
                     theme="vs-dark"
                     language={language}
                     value={code}
-                    onChange={(val) => { if(isDriver) { setCode(val); socket.emit('code_update', { roomId, code: val }); } }}
-                    options={{ fontSize: 16, readOnly: !isDriver }}
+                    onChange={(val) => { 
+                        if(isDriver && val !== code && socket.connected) { 
+                            setCode(val); 
+                            socket.emit('code_update', { roomId, code: val }); 
+                        } 
+                    }}
+                    options={{ 
+                        fontSize: 16, 
+                        readOnly: !isDriver,
+                        automaticLayout: true
+                    }}
                 />
                 
-                <div style={{ height: '35%', background: '#000', color: '#0f0', padding: '15px', overflowY: 'auto', borderTop: '2px solid #334155' }}>
-                    <pre style={{ margin: 0, whiteSpace: 'pre-wrap' }}>{output || "> Code output will appear here..."}</pre>
+                <div className="output-panel">
+                    <pre className="output-content">{output || "> Code output will appear here..."}</pre>
                 </div>
 
-                {/* FIXED SUBTITLE OVERLAY */}
                 {(currentSentence || remoteSubtitle) && (
-                    <div style={{ 
-                        position: 'absolute', 
-                        bottom: '40%', 
-                        left: '50%', 
-                        transform: 'translateX(-50%)', 
-                        backgroundColor: 'rgba(0, 0, 0, 0.85)', 
-                        padding: '12px 24px', 
-                        borderRadius: '8px', 
-                        zIndex: 999, 
-                        color: 'white',
-                        border: '1px solid #3b82f6',
-                        textAlign: 'center',
-                        maxWidth: '80%'
-                    }}>
+                    <div className="subtitle-overlay">
                         {currentSentence || remoteSubtitle}
                     </div>
                 )}
 
                 {showAIOverlay && aiData && (
                     <Draggable nodeRef={draggableNodeRef} handle=".drag-handle">
-                        <div ref={draggableNodeRef} style={{
-                            position: 'absolute', top: '50px', left: '50px', width: '450px',
-                            background: '#1e293b', color: 'white', borderRadius: '12px',
-                            boxShadow: '0 20px 50px rgba(0,0,0,0.5)', zIndex: 1000, border: '1px solid #3b82f6'
-                        }}>
-                            <div className="drag-handle" style={{ 
-                                padding: '12px', background: '#3b82f6', cursor: 'move', 
-                                borderRadius: '10px 10px 0 0', display: 'flex', justifyContent: 'space-between', alignItems: 'center' 
-                            }}>
-                                <span style={{ fontWeight: 'bold' }}>🧠 AI Logic Explanation</span>
-                                <div style={{ display: 'flex', gap: '8px' }}>
-                                    <button onClick={downloadPDF} style={{ background: '#22c55e', border: 'none', color: 'white', padding: '2px 8px', borderRadius: '4px', fontSize: '12px', cursor: 'pointer' }}>PDF</button>
-                                    <button onClick={() => setShowAIOverlay(false)} style={{ background: 'none', border: 'none', color: 'white', fontWeight: 'bold', cursor: 'pointer' }}>✕</button>
+                        <div ref={draggableNodeRef} className="ai-summary-window">
+                            <div className="drag-handle summary-heading">
+                                <span>🧠 AI Assistant</span>
+                                <div className="summary-actions">
+                                    <button onClick={downloadPDF} className="pdf-button">📄 PDF</button>
+                                    <button onClick={() => setShowAIOverlay(false)} className="close-button">✕</button>
                                 </div>
                             </div>
-                            <div style={{ padding: '20px', maxHeight: '400px', overflowY: 'auto' }}>
-                                <h4 style={{ color: '#60a5fa', marginTop: 0 }}>Approach</h4>
-                                <p style={{ fontSize: '14px', background: '#0f172a', padding: '10px', borderRadius: '6px' }}>{aiData.approach || "N/A"}</p>
-                                <h4 style={{ color: '#60a5fa' }}>Logic</h4>
-                                <p style={{ fontSize: '14px', lineHeight: '1.6' }}>{aiData.logic || aiData.summary || "No summary generated."}</p>
+                            
+                            <div className="summary-tabs">
+                                <button 
+                                    className={`tab-button ${activeTab === 'logic' ? 'active' : ''}`}
+                                    onClick={() => setActiveTab('logic')}
+                                >
+                                    📝 Logic
+                                </button>
+                                <button 
+                                    className={`tab-button ${activeTab === 'flashcards' ? 'active' : ''}`}
+                                    onClick={() => setActiveTab('flashcards')}
+                                >
+                                    🎴 Questions
+                                </button>
+                            </div>
+
+                            <div className="summary-content">
+                                {activeTab === 'logic' && (
+                                    <div className="logic-section">
+                                        <div className="logic-card">
+                                            <h4>🎯 Approach</h4>
+                                            <p>{aiData.approach || "..."}</p>
+                                        </div>
+                                        <div className="logic-card">
+                                            <h4>💡 Logic</h4>
+                                            <p>{aiData.logic || aiData.summary || "..."}</p>
+                                        </div>
+                                    </div>
+                                )}
+
+                                {activeTab === 'flashcards' && aiData.flashcards?.length > 0 && (
+                                    <div className="flashcards-section">
+                                        <div className="flashcard">
+                                            <span className="question-number">
+                                                Q{currentFlashcardIndex + 1}/{aiData.flashcards.length}
+                                            </span>
+                                            <p className="question">
+                                                {aiData.flashcards[currentFlashcardIndex].q || 
+                                                 aiData.flashcards[currentFlashcardIndex].question}
+                                            </p>
+                                            <p className="answer">
+                                                <strong>Answer:</strong> {
+                                                    aiData.flashcards[currentFlashcardIndex].a || 
+                                                    aiData.flashcards[currentFlashcardIndex].answer
+                                                }
+                                            </p>
+                                        </div>
+                                        <div className="flashcard-navigation">
+                                            <button onClick={() => setCurrentFlashcardIndex(
+                                                prev => prev > 0 ? prev - 1 : aiData.flashcards.length - 1
+                                            )}>←</button>
+                                            <div className="dots">
+                                                {aiData.flashcards.map((_, i) => (
+                                                    <span 
+                                                        key={i}
+                                                        className={`dot ${i === currentFlashcardIndex ? 'active' : ''}`}
+                                                        onClick={() => setCurrentFlashcardIndex(i)}
+                                                    />
+                                                ))}
+                                            </div>
+                                            <button onClick={() => setCurrentFlashcardIndex(
+                                                prev => prev < aiData.flashcards.length - 1 ? prev + 1 : 0
+                                            )}>→</button>
+                                        </div>
+                                    </div>
+                                )}
                             </div>
                         </div>
                     </Draggable>
                 )}
             </div>
 
-            <div style={{ 
-                width: isVideoMaximized ? '800px' : '400px', 
-                background: '#000', 
-                position: 'relative',
-                transition: 'width 0.3s ease' 
-            }}>
-                <button 
-                    onClick={handleLayoutToggle}
-                    style={{
-                        position: 'absolute', top: '10px', left: '-45px', zIndex: 101,
-                        background: '#3b82f6', color: 'white', border: 'none',
-                        borderRadius: '4px 0 0 4px', cursor: 'pointer', padding: '10px 5px'
-                    }}
-                >
+            <div className={`video-panel ${isVideoMaximized ? 'maximized' : ''}`}>
+                <button onClick={handleLayoutToggle} className="video-toggle">
                     {isVideoMaximized ? '▶' : '◀'}
                 </button>
-
-                <div ref={jitsiContainerRef} style={{ width: '100%', height: '100%', display: jitsiActive ? 'block' : 'none' }}>
-                    {!jitsiToken && <div style={{ color: '#fff', padding: '20px' }}>🔐 Authenticating Jitsi...</div>}
+                <div ref={jitsiContainerRef} className={`jitsi-container ${jitsiActive ? 'active' : ''}`}>
+                    {!jitsiToken && !jitsiError && <div className="auth-message">🔐 Authenticating Jitsi...</div>}
+                    {jitsiError && (
+                        <div className="jitsi-error">
+                            <p>❌ Video call unavailable</p>
+                            <button onClick={() => window.location.reload()}>Retry</button>
+                        </div>
+                    )}
                 </div>
-                {!jitsiActive && (
-                    <div style={{ height: '100%', display: 'flex', flexDirection: 'column', justifyContent: 'center', alignItems: 'center', background: '#1e293b' }}>
-                        <p>Call Ended</p>
-                        <button onClick={initJitsi} style={{ background: '#3b82f6', color: 'white', padding: '10px', borderRadius: '5px', border: 'none', cursor: 'pointer' }}>Restart Call</button>
-                    </div>
-                )}
             </div>
         </div>
     );

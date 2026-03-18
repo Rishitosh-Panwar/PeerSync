@@ -1,15 +1,26 @@
 import { useState } from 'react';
 import { useNavigate, Link } from 'react-router-dom';
+import './Register.css';
 
 export default function Register() {
   const [username, setUsername] = useState('');
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
+  const [isLoading, setIsLoading] = useState(false);
   const navigate = useNavigate();
   const BACKEND_URL = "http://localhost:5000";
 
+  // Password strength indicator
+  const getPasswordStrength = () => {
+    if (password.length === 0) return '';
+    if (password.length < 6) return 'weak';
+    if (password.length < 10) return 'medium';
+    return 'strong';
+  };
+
   const handleSubmit = async (e) => {
     e.preventDefault();
+    setIsLoading(true);
     try {
       const res = await fetch(`${BACKEND_URL}/api/auth/register`, {
         method: 'POST',
@@ -29,19 +40,46 @@ export default function Register() {
     } catch (err) {
       alert('Network Error: Make sure your backend server is running on port 5000!');
       console.error(err);
+    } finally {
+      setIsLoading(false);
     }
   };
 
   return (
-    <div className="auth-container">
-      <div className="auth-card">
-        <h2>Create <span style={{ color: '#3b82f6' }}>Account</span></h2>
-        <p style={{ color: '#94a3b8', marginBottom: '25px', fontSize: '14px' }}>
+    <div className="register-container">
+      {/* Floating particles */}
+      <div className="register-particles">
+        {[...Array(20)].map((_, i) => (
+          <div key={i} className="register-particle" style={{
+            left: `${Math.random() * 100}%`,
+            top: `${Math.random() * 100}%`,
+            animationDelay: `${Math.random() * 5}s`,
+            width: `${Math.random() * 6 + 2}px`,
+            height: `${Math.random() * 6 + 2}px`
+          }}></div>
+        ))}
+      </div>
+
+      {/* Back to Home button */}
+      <div className="register-back-home">
+        <button className="register-back-btn" onClick={() => navigate('/home')}>
+          <svg className="register-back-arrow" viewBox="0 0 24 24">
+            <path d="M19 12H5M12 19l-7-7 7-7"/>
+          </svg>
+          Back to Home
+        </button>
+      </div>
+
+      <div className="register-card">
+        <h2 className="register-title">
+          Create <span>Account</span>
+        </h2>
+        <p className="register-subtitle">
           Join the real-time collaborative lab
         </p>
 
         <form onSubmit={handleSubmit}>
-          <div className="input-group">
+          <div className="register-input-group">
             <label>Username</label>
             <input 
               type="text" 
@@ -49,10 +87,11 @@ export default function Register() {
               value={username} 
               onChange={(e) => setUsername(e.target.value)} 
               required 
+              disabled={isLoading}
             />
           </div>
 
-          <div className="input-group">
+          <div className="register-input-group">
             <label>Email</label>
             <input 
               type="email" 
@@ -60,10 +99,11 @@ export default function Register() {
               value={email} 
               onChange={(e) => setEmail(e.target.value)} 
               required 
+              disabled={isLoading}
             />
           </div>
 
-          <div className="input-group">
+          <div className="register-input-group">
             <label>Password</label>
             <input 
               type="password" 
@@ -71,66 +111,31 @@ export default function Register() {
               value={password} 
               onChange={(e) => setPassword(e.target.value)} 
               required 
+              disabled={isLoading}
             />
+            {password && (
+              <div className="password-strength">
+                <div className={`strength-bar ${getPasswordStrength()}`}></div>
+              </div>
+            )}
           </div>
 
-          <button type="submit" className="auth-btn">Register</button>
+          <button type="submit" className="register-btn" disabled={isLoading}>
+            {isLoading ? 'Creating Account...' : 'Register'}
+          </button>
         </form>
 
-        <p className="auth-footer">
-          Already have an account? <Link to="/">Login here</Link>
+        <p className="register-footer">
+          Already have an account? <Link to="/login">Login here</Link>
         </p>
       </div>
 
-      <style>{`
-        .auth-container { 
-          height: 100vh; 
-          display: flex; 
-          align-items: center; 
-          justify-content: center; 
-          background: #0f172a; 
-          color: white; 
-          font-family: 'Inter', sans-serif;
-        }
-        .auth-card { 
-          background: #1e293b; 
-          padding: 40px; 
-          border-radius: 12px; 
-          width: 100%; 
-          max-width: 400px; 
-          box-shadow: 0 10px 25px rgba(0,0,0,0.5); 
-          text-align: center; 
-          border: 1px solid #334155;
-        }
-        .input-group { text-align: left; margin-bottom: 15px; }
-        .input-group label { display: block; margin-bottom: 8px; font-size: 14px; color: #94a3b8; }
-        .input-group input { 
-          width: 100%; 
-          padding: 12px; 
-          background: #0f172a; 
-          border: 1px solid #334155; 
-          border-radius: 8px; 
-          color: white; 
-          outline: none;
-        }
-        .input-group input:focus { border-color: #3b82f6; }
-        .auth-btn { 
-          width: 100%; 
-          padding: 12px; 
-          background: #3b82f6; 
-          color: white; 
-          border: none; 
-          border-radius: 8px; 
-          font-weight: bold; 
-          cursor: pointer; 
-          margin-top: 10px;
-          transition: background 0.2s; 
-        }
-        .auth-btn:hover { background: #2563eb; }
-        .auth-footer { margin-top: 20px; font-size: 14px; color: #94a3b8; }
-        .auth-footer a { color: #3b82f6; text-decoration: none; font-weight: 600; }
-        .auth-footer a:hover { text-decoration: underline; }
-      `}</style>
+      {/* Floating Shapes */}
+      <div className="register-shapes">
+        <div className="register-shape register-shape-1"></div>
+        <div className="register-shape register-shape-2"></div>
+        <div className="register-shape register-shape-3"></div>
+      </div>
     </div>
   );
 }

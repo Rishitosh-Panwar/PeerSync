@@ -1,14 +1,17 @@
 import { useState } from 'react';
 import { useNavigate, Link } from 'react-router-dom';
+import './Login.css';
 
 export default function Login() {
     const [email, setEmail] = useState('');
     const [password, setPassword] = useState('');
+    const [isLoading, setIsLoading] = useState(false);
     const navigate = useNavigate();
     const BACKEND_URL = "http://localhost:5000";
 
     const handleSubmit = async (e) => {
         e.preventDefault();
+        setIsLoading(true);
         try {
             const res = await fetch(`${BACKEND_URL}/api/auth/login`, {
                 method: 'POST',
@@ -30,21 +33,54 @@ export default function Login() {
         } catch (err) {
             localStorage.removeItem('token');
             alert("Server connection failed.");
+        } finally {
+            setIsLoading(false);
         }
     };
 
     return (
         <div className="auth-container">
+            {/* Floating particles */}
+            <div className="floating-particles">
+                {[...Array(20)].map((_, i) => (
+                    <div key={i} className="particle" style={{
+                        left: `${Math.random() * 100}%`,
+                        top: `${Math.random() * 100}%`,
+                        animationDelay: `${Math.random() * 5}s`,
+                        width: `${Math.random() * 6 + 2}px`,
+                        height: `${Math.random() * 6 + 2}px`
+                    }}></div>
+                ))}
+            </div>
+
+            {/* Back to Home button */}
+            <div className="back-home">
+                <button className="back-home-btn" onClick={() => navigate('/home')}>
+                    <svg className="back-arrow" viewBox="0 0 24 24">
+                        <path d="M19 12H5M12 19l-7-7 7-7"/>
+                    </svg>
+                    Back to Home
+                </button>
+            </div>
+
             <div className="auth-card">
-                <h2>Login to <span style={{ color: '#3b82f6' }}>PeerSync</span></h2>
+                <h2 className="auth-title">
+                    Login to <span>PeerSync</span>
+                </h2>
+                <p className="auth-subtitle">
+                    Enter your credentials to access the collaborative lab
+                </p>
+
                 <form onSubmit={handleSubmit}>
                     <div className="input-group">
                         <label>Email</label>
                         <input 
                             type="email" 
                             placeholder="email@example.com"
+                            value={email}
                             onChange={(e) => setEmail(e.target.value)} 
                             required 
+                            disabled={isLoading}
                         />
                     </div>
                     <div className="input-group">
@@ -52,28 +88,28 @@ export default function Login() {
                         <input 
                             type="password" 
                             placeholder="••••••••"
+                            value={password}
                             onChange={(e) => setPassword(e.target.value)} 
                             required 
+                            disabled={isLoading}
                         />
                     </div>
-                    <button type="submit" className="auth-btn">Sign In</button>
+                    <button type="submit" className="auth-btn" disabled={isLoading}>
+                        {isLoading ? 'Authenticating...' : 'Sign In'}
+                    </button>
                 </form>
+
                 <p className="auth-footer">
                     Don't have an account? <Link to="/register">Register here</Link>
                 </p>
             </div>
 
-            <style>{`
-                .auth-container { height: 100vh; display: flex; align-items: center; justify-content: center; background: #0f172a; color: white; }
-                .auth-card { background: #1e293b; padding: 40px; border-radius: 12px; width: 100%; max-width: 400px; box-shadow: 0 10px 25px rgba(0,0,0,0.5); text-align: center; }
-                .input-group { text-align: left; margin-bottom: 20px; }
-                .input-group label { display: block; margin-bottom: 8px; font-size: 14px; color: #94a3b8; }
-                .input-group input { width: 100%; padding: 12px; background: #0f172a; border: 1px solid #334155; border-radius: 8px; color: white; }
-                .auth-btn { width: 100%; padding: 12px; background: #3b82f6; color: white; border: none; border-radius: 8px; font-weight: bold; cursor: pointer; transition: background 0.2s; }
-                .auth-btn:hover { background: #2563eb; }
-                .auth-footer { margin-top: 20px; font-size: 14px; color: #94a3b8; }
-                .auth-footer a { color: #3b82f6; text-decoration: none; }
-            `}</style>
+            {/* Floating Shapes */}
+            <div className="floating-shapes">
+                <div className="shape shape-1"></div>
+                <div className="shape shape-2"></div>
+                <div className="shape shape-3"></div>
+            </div>
         </div>
     );
 }

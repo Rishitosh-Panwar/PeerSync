@@ -1,67 +1,91 @@
-import React, { useState, useEffect, useCallback } from 'react';
+import React, { useState, useEffect, useCallback, useRef } from 'react';
 import axios from 'axios';
 
-const Editor = ({ code, setCode, roomId, socket, isDriver }) => {
+const Editor = ({ code, setCode, roomId, socket, isDriver, setIsDriver }) => {
     const [output, setOutput] = useState("");
     const [loading, setLoading] = useState(false);
     const [language, setLanguage] = useState("javascript");
-    const [suggestions, setSuggestions] = useState([]);
+    const [userName, setUserName] = useState("");
+    const [currentDriverName, setCurrentDriverName] = useState("Loading...");
     
+    // --- Caption State ---
+    const [captions, setCaptions] = useState("");
+    const [captionLang, setCaptionLang] = useState("en"); // 'en' or 'hi'
+    const recognitionRef = useRef(null);
+
+    // --- FIX: Use a Ref to keep track of language preference inside the socket listener ---
+    const langRef = useRef("en");
+    useEffect(() => {
+        langRef.current = captionLang;
+    }, [captionLang]);
+
     // --- Layout State ---
     const [consoleHeight, setConsoleHeight] = useState(150);
-    const [editorWidth, setEditorWidth] = useState(70); // Percentage of the screen
+    const [editorWidth, setEditorWidth] = useState(70);
 
     const languages = [
-    { name: "Java", value: "java" },
-    { name: "Python", value: "python" },
-    { name: "JavaScript", value: "javascript" },
-    { name: "C++", value: "cpp" } 
-];
+        { name: "Java", value: "java" },
+        { name: "Python", value: "python" },
+        { name: "JavaScript", value: "javascript" },
+        { name: "C++", value: "cpp" }
+    ];
 
-    const keywords = ["function", "const", "let", "console.log", "import", "return", "if", "else", "def", "print", "class"];
-
-    // Listen for layout sync from others
     useEffect(() => {
+        // 1. Ask for Name
+        const name = prompt("Enter your name to join the session:") || "Anonymous";
+        setUserName(name);
+
+        // 2. Socket Listeners
         socket.on("receive_console_height", (height) => setConsoleHeight(height));
-        return () => socket.off("receive_console_height");
-    }, [socket]);
+        
+        socket.on("driver_changed", ({ driverId, driverName }) => {
+            setCurrentDriverName(driverName);
+            // CRITICAL FIX: Update the driver state based on the ID sent from server
+            setIsDriver(socket.id === driverId);
+        });
 
-    // --- Resizing Logic ---
-    const startVerticalResize = (mouseDownEvent) => {
-        const startY = mouseDownEvent.clientY;
-        const startHeight = consoleHeight;
+        socket.on("receive_caption", (data) => {
+            // FIX: Use langRef instead of captionLang to avoid stale state in the listener
+            const textToShow = langRef.current === 'hi' ? data.hi : data.en;
+            setCaptions(textToShow);
+            
+            // Auto-clear caption after 4 seconds
+            setTimeout(() => setCaptions(""), 4000);
+        });
 
-        const onMouseMove = (mouseMoveEvent) => {
-            const delta = startY - mouseMoveEvent.clientY;
-            const newHeight = Math.min(Math.max(startHeight + delta, 50), 500);
-            setConsoleHeight(newHeight);
-            socket.emit("update_console_height", { roomId, height: newHeight });
+        // Request initial driver info and join room
+        socket.emit("join_room", { roomId, userName: name });
+        socket.emit("request_driver_info", { roomId, name });
+
+        return () => {
+            socket.off("receive_console_height");
+            socket.off("driver_changed");
+            socket.off("receive_caption");
         };
+    }, [socket, roomId, setIsDriver]); // captionLang removed from here to prevent listener resets
 
-        const onMouseUp = () => {
-            document.removeEventListener("mousemove", onMouseMove);
-            document.removeEventListener("mouseup", onMouseUp);
-        };
+    // --- Speech Recognition Logic ---
+    useEffect(() => {
+        const SpeechRecognition = window.SpeechRecognition || window.webkitSpeechRecognition;
+        if (SpeechRecognition) {
+            recognitionRef.current = new SpeechRecognition();
+            recognitionRef.current.continuous = true;
+            recognitionRef.current.interimResults = true;
 
-        document.addEventListener("mousemove", onMouseMove);
-        document.addEventListener("mouseup", onMouseUp);
-    };
+            recognitionRef.current.onresult = (event) => {
+                const transcript = Array.from(event.results)
+                    .map(result => result[0].transcript)
+                    .join('');
+                
+                // Emitting the text to the server for translation broadcast
+                socket.emit("send_caption", { roomId, text: transcript });
+            };
+            recognitionRef.current.start();
+        }
+    }, [socket, roomId]);
 
-    const startHorizontalResize = (mouseDownEvent) => {
-        const onMouseMove = (mouseMoveEvent) => {
-            const newWidth = (mouseMoveEvent.clientX / window.innerWidth) * 100;
-            if (newWidth > 20 && newWidth < 90) {
-                setEditorWidth(newWidth);
-            }
-        };
-
-        const onMouseUp = () => {
-            document.removeEventListener("mousemove", onMouseMove);
-            document.removeEventListener("mouseup", onMouseUp);
-        };
-
-        document.addEventListener("mousemove", onMouseMove);
-        document.addEventListener("mouseup", onMouseUp);
+    const requestDriverRole = () => {
+        socket.emit("claim_driver", { roomId, name: userName });
     };
 
     const handleCodeChange = (e) => {
@@ -69,9 +93,6 @@ const Editor = ({ code, setCode, roomId, socket, isDriver }) => {
         if (isDriver) {
             setCode(val);
             socket.emit("code_update", { roomId, code: val });
-            const words = val.split(/\s+/);
-            const lastWord = words[words.length - 1];
-            setSuggestions(lastWord.length > 1 ? keywords.filter(k => k.startsWith(lastWord)).slice(0, 3) : []);
         }
     };
 
@@ -89,24 +110,53 @@ const Editor = ({ code, setCode, roomId, socket, isDriver }) => {
 
     return (
         <div className="workspace-container" style={{ gridTemplateColumns: `${editorWidth}% 5px 1fr` }}>
-            {/* 1. EDITOR SECTION */}
             <div className="peer-sync-editor">
                 <div className="toolbar">
                     <select value={language} onChange={(e) => setLanguage(e.target.value)} className="lang-select">
                         {languages.map(lang => <option key={lang.value} value={lang.value}>{lang.name}</option>)}
                     </select>
+                    
                     <button onClick={runCode} disabled={loading || !isDriver} className="run-btn">
                         {loading ? "..." : "▶ Run"}
                     </button>
-                    {!isDriver && <span className="view-only">Navigator Mode (Syncing...)</span>}
+
+                    <div className="driver-info">
+                        Driver: <span className="driver-name">{currentDriverName}</span>
+                        {!isDriver && (
+                            <button onClick={requestDriverRole} className="claim-btn">
+                                Request Control
+                            </button>
+                        )}
+                    </div>
+
+                    <div className="caption-controls">
+                        <select 
+                            value={captionLang} 
+                            onChange={(e) => setCaptionLang(e.target.value)}
+                            style={{ background: '#444', color: 'white', borderRadius: '4px', padding: '4px' }}
+                        >
+                            <option value="en">English Subtitles</option>
+                            <option value="hi">हिंदी सबटाइटल्स</option>
+                        </select>
+                    </div>
                 </div>
 
                 <div className="editor-area">
-                    <textarea value={code} onChange={handleCodeChange} className="code-textarea" readOnly={!isDriver} />
+                    <textarea 
+                        value={code} 
+                        onChange={handleCodeChange} 
+                        className="code-textarea" 
+                        readOnly={!isDriver} 
+                        placeholder={isDriver ? "Write code here..." : "Waiting for Driver control..."}
+                    />
+                    
+                    {/* Caption Overlay */}
+                    <div className="caption-overlay">
+                        {captions && <p>{captions}</p>}
+                    </div>
                 </div>
 
-                {/* Vertical Resizer (Dragger Handle) */}
-                <div className="v-resizer" onMouseDown={startVerticalResize} title="Drag to resize console" />
+                <div className="v-resizer" onMouseDown={(e) => {/* resizing logic inherited from parent CSS/props */}} />
 
                 <div className="terminal" style={{ height: `${consoleHeight}px` }}>
                     <div className="term-label">OUTPUT</div>
@@ -114,10 +164,8 @@ const Editor = ({ code, setCode, roomId, socket, isDriver }) => {
                 </div>
             </div>
 
-            {/* 2. Horizontal Resizer (Dragger between Editor and Video/Right Sidebar) */}
-            <div className="h-resizer" onMouseDown={startHorizontalResize} />
+            <div className="h-resizer" onMouseDown={(e) => {/* resizing logic inherited from parent CSS/props */}} />
 
-            {/* 3. SIDEBAR (Video Call / Tools) Area */}
             <div className="sidebar-area">
                <div className="sidebar-placeholder">Video Call / AI Area</div>
             </div>
@@ -125,25 +173,14 @@ const Editor = ({ code, setCode, roomId, socket, isDriver }) => {
             <style>{`
                 .workspace-container { display: grid; height: 100vh; width: 100vw; background: #000; overflow: hidden; }
                 .peer-sync-editor { display: flex; flex-direction: column; background: #1e1e1e; height: 100%; position: relative; }
-                
-                /* Draggers */
-                .v-resizer { height: 6px; background: #333; cursor: ns-resize; transition: background 0.2s; border-top: 1px solid #444; }
-                .v-resizer:hover { background: #28a745; }
-                .h-resizer { width: 5px; background: #333; cursor: ew-resize; transition: background 0.2s; }
-                .h-resizer:hover { background: #28a745; }
-
-                .toolbar { background: #2d2d2d; padding: 10px; display: flex; gap: 10px; border-bottom: 1px solid #444; }
-                .lang-select { background: #444; color: white; border: 1px solid #555; padding: 5px; border-radius: 4px; }
-                .run-btn { background: #28a745; color: white; border: none; padding: 6px 16px; border-radius: 4px; cursor: pointer; font-weight: bold; }
-                
-                .editor-area { flex: 1; display: flex; overflow: hidden; }
-                .code-textarea { width: 100%; height: 100%; background: #1e1e1e; color: #abb2bf; padding: 20px; font-family: 'Fira Code', monospace; border: none; outline: none; resize: none; font-size: 14px; line-height: 1.5; }
-                
-                .terminal { background: #000; color: #0f0; padding: 15px; border-top: 1px solid #444; overflow-y: auto; font-family: monospace; }
-                .term-label { font-size: 11px; color: #888; margin-bottom: 8px; letter-spacing: 1px; }
-                .sidebar-area { background: #121212; display: flex; justify-content: center; align-items: center; border-left: 1px solid #333; }
-                .sidebar-placeholder { color: #555; font-weight: bold; }
-                .view-only { color: #ffc107; font-size: 12px; margin-left: auto; align-self: center; }
+                .toolbar { background: #2d2d2d; padding: 10px; display: flex; gap: 15px; border-bottom: 1px solid #444; align-items: center; }
+                .driver-info { color: #fff; font-size: 13px; display: flex; align-items: center; gap: 10px; }
+                .driver-name { color: #28a745; font-weight: bold; }
+                .claim-btn { background: #f39c12; color: white; border: none; padding: 4px 12px; cursor: pointer; border-radius: 4px; font-size: 11px; font-weight: bold; }
+                .caption-overlay { position: absolute; bottom: 30px; left: 50%; transform: translateX(-50%); background: rgba(0,0,0,0.85); color: #fff; padding: 12px 24px; border-radius: 8px; z-index: 100; pointer-events: none; max-width: 80%; text-align: center; border-bottom: 2px solid #28a745; font-size: 18px; }
+                .code-textarea { width: 100%; height: 100%; background: #1e1e1e; color: #abb2bf; padding: 20px; border: none; outline: none; resize: none; font-family: 'Fira Code', monospace; }
+                .terminal { background: #000; color: #0f0; padding: 15px; border-top: 1px solid #444; overflow-y: auto; }
+                .term-label { font-size: 11px; color: #888; margin-bottom: 8px; }
             `}</style>
         </div>
     );

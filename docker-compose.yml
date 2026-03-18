@@ -19,7 +19,7 @@ services:
     ports:
       - "5173:5173"
     environment:
-      - VITE_BACKEND_URL=http://localhost:5000
+      - VITE_BACKEND_URL=${VITE_BACKEND_URL}
     volumes:
       - ./client:/usr/src/app         # Live sync for frontend
       - /usr/src/app/node_modules     # Don't overwrite container modules
