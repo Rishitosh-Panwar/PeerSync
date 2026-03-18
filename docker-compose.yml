@@ -4,6 +4,11 @@ services:
     ports:
       - "5000:5000"
     env_file: ./server/.env
+    volumes:
+      - ./server:/usr/src/app         # Live sync for backend
+      - /usr/src/app/node_modules     # Don't overwrite container modules
+    # This command tells the backend to watch for changes and restart automatically
+    command: npx nodemon server.js
     networks:
       - peersync-network
     depends_on:
@@ -15,6 +20,9 @@ services:
       - "5173:5173"
     environment:
       - VITE_BACKEND_URL=http://localhost:5000
+    volumes:
+      - ./client:/usr/src/app         # Live sync for frontend
+      - /usr/src/app/node_modules     # Don't overwrite container modules
     networks:
       - peersync-network
 
@@ -23,20 +31,29 @@ services:
     container_name: piston_api
     restart: always
     privileged: true
+    environment:
+      - PISTON_DISABLE_LIMITS=true
+      - PISTON_RUN_TIMEOUT=20000
+      - PISTON_COMPILE_TIMEOUT=20000
+    # Add this to ensure the container has full hardware access
+    security_opt:
+      - seccomp:unconfined
+      - apparmor:unconfined
     ports:
-      - "2000:2000" 
+      - "2000:2000"
+    tmpfs:
+      - /tmp
     volumes:
       - piston-data:/piston/packages
-    tmpfs:
-      - /tmp:exec,size=1000M
     networks:
       peersync-network:
         aliases:
-          - piston # This ensures the backend can find it at http://piston:2000
+          - piston
 
 networks:
   peersync-network:
     driver: bridge
+
 
 volumes:
   piston-data:

@@ -17,3 +17,13 @@ out/
 .idea/
 .DS_Store
 Thumbs.db
+
+# Ignore the specific large folder
+piston_languages/
+
+# Ignore all archive files
+*.tar.gz
+*.zip
+
+# Ignore Java modules
+*.jmod

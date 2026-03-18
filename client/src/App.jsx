@@ -41,6 +41,7 @@ export default function App() {
     const [output, setOutput] = useState("");
     const [speechLang, setSpeechLang] = useState("hi-IN");
     const [jitsiToken, setJitsiToken] = useState("");
+    const [jitsiActive, setJitsiActive] = useState(true);
 
     const [showAIOverlay, setShowAIOverlay] = useState(false);
     const [aiData, setAiData] = useState(null);
@@ -93,11 +94,9 @@ export default function App() {
     const toggleSpeech = () => setIsListening(!isListening);
 
     // --- 3. Jitsi & Socket ---
-    useEffect(() => {
-        const token = "valid-session-token"; // Temporary bypass or use your auth logic
-        if (!token) { navigate('/'); return; }
-
+    const initJitsi = () => {
         if (window.JitsiMeetExternalAPI && jitsiContainerRef.current && jitsiToken) {
+            setJitsiActive(true);
             const domain = "8x8.vc"; 
             const options = {
                 roomName: `vpaas-magic-cookie-8f291ebf52794eb5896baaed63b01738/PeerSyncRoom-${roomId}`,
@@ -105,25 +104,36 @@ export default function App() {
                 width: "100%", 
                 height: "100%",
                 parentNode: jitsiContainerRef.current,
-                configOverwrite: { 
-                    prejoinPageEnabled: false,
-                    enableExternalAuth: false,
-                    disableThirdPartyRequests: true,
-                    disableInviteFunctions: true 
-                },
+                configOverwrite: { prejoinPageEnabled: false },
                 interfaceConfigOverwrite: { TILE_VIEW_MAX_COLUMNS: 2 }
             };
 
             jitsiApiRef.current = new window.JitsiMeetExternalAPI(domain, options);
             
+            // Handle black screen on cut call
+            jitsiApiRef.current.addEventListeners({
+                videoConferenceLeft: () => {
+                    setJitsiActive(false);
+                    if (jitsiApiRef.current) jitsiApiRef.current.dispose();
+                }
+            });
+        }
+    };
+
+    useEffect(() => {
+        if (jitsiToken) {
+            initJitsi();
             socket.emit('join_room', { roomId });
+            
             socket.on('initial_code', (savedCode) => setCode(savedCode));
             socket.on('code_update', (newCode) => setCode(newCode));
             socket.on('token_passed', (driverId) => setIsDriver(socket.id === driverId));
+            
             socket.on('receive_subtitle', (data) => {
                 setRemoteSubtitle(data.text);
                 if(data.isFinal) setTimeout(() => setRemoteSubtitle(""), 4000);
             });
+            
             socket.on('driver_request_received', ({ requesterId, requesterName }) => {
                 setDriverRequest({ requesterId, requesterName });
             });
@@ -150,21 +160,19 @@ export default function App() {
                 if (jitsiApiRef.current) jitsiApiRef.current.dispose(); 
             };
         }
-    }, [navigate, roomId, jitsiToken]);
+    }, [roomId, jitsiToken]);
 
     const runCode = async () => {
         setIsRunning(true);
         setOutput("🚀 PeerSync Engine running...");
         try {
-            // Updated to talk to your backend
             const res = await axios.post(`${BACKEND_URL}/api/execute`, { language, code });
-            
-            // Check for both direct Piston response or standard error
-            const result = res.data.run?.stdout || res.data.run?.stderr || res.data.output || "No output.";
+            // FIXED PARSING FOR PISTON
+            const result = res.data.run?.output || res.data.run?.stdout || res.data.output || "No output.";
             setOutput(result);
             socket.emit("share_output", { roomId, output: result });
         } catch (error) { 
-            const errorMsg = error.response?.data?.error || "Code Execution Engine is unauthorized or busy.";
+            const errorMsg = error.response?.data?.error || "Code Execution Engine busy.";
             setOutput(`❌ Error: ${errorMsg}`);
         } finally { setIsRunning(false); }
     };
@@ -186,7 +194,7 @@ export default function App() {
     const handleLanguageChange = (newLang) => {
         if (isDriver) {
             setLanguage(newLang);
-            setCode(starterCode[newLang]); // Update code to template on language change
+            setCode(starterCode[newLang]); 
             socket.emit("language_change", { roomId, language: newLang });
         }
     };
@@ -206,22 +214,12 @@ export default function App() {
         doc.text(`Language: ${language}`, 10, 30);
         doc.text("Logic Explanation:", 10, 40);
         doc.text(aiData.logic || aiData.summary || "No data", 10, 50, { maxWidth: 180 });
-        
-        if(aiData.flashcards) {
-            doc.addPage();
-            doc.text("Flashcards:", 10, 20);
-            aiData.flashcards.forEach((f, i) => {
-                doc.text(`${i+1}. Q: ${f.q}`, 10, 30 + (i * 20));
-                doc.text(`   A: ${f.a}`, 10, 35 + (i * 20));
-            });
-        }
         doc.save("PeerSync_Notes.pdf");
     };
 
     const requestToDrive = () => {
         const userName = prompt("Enter your name to request control:") || "Someone";
         socket.emit("request_driver", { roomId, requesterName: userName });
-        alert("Request sent to the Driver!");
     };
 
     const handleAcceptRequest = () => {
@@ -249,15 +247,17 @@ export default function App() {
                     <button onClick={generateNotes} disabled={isGenerating || !isDriver} style={{ background: '#a855f7', color: 'white', padding: '5px 15px', borderRadius: '4px', border: 'none', cursor: 'pointer', opacity: isDriver ? 1 : 0.6 }}>
                         {isGenerating ? "Analyzing..." : "Summary"}
                     </button>
-                    {!isDriver && (
+                    {!isDriver ? (
                         <button onClick={requestToDrive} style={{ background: '#f59e0b', color: 'white', padding: '5px 15px', borderRadius: '4px', border: 'none', cursor: 'pointer' }}>
                             🎮 Request Control
                         </button>
+                    ) : (
+                        <span style={{color: '#22c55e', fontSize: '12px'}}>🌟 You are Driver</span>
                     )}
 
                     {isDriver && driverRequest && (
                         <div style={{ position: 'absolute', top: '60px', right: '20px', background: '#1e293b', border: '2px solid #f59e0b', padding: '15px', borderRadius: '8px', zIndex: 200, color: 'white', boxShadow: '0 4px 15px rgba(0,0,0,0.5)' }}>
-                            <p style={{ margin: '0 0 10px 0' }}>🔔 <strong>{driverRequest.requesterName}</strong> wants to take control.</p>
+                            <p style={{ margin: '0 0 10px 0' }}>🔔 <strong>{driverRequest.requesterName}</strong> wants control.</p>
                             <div style={{ display: 'flex', gap: '10px' }}>
                                 <button onClick={handleAcceptRequest} style={{ background: '#22c55e', color: 'white', border: 'none', padding: '5px 10px', borderRadius: '4px', cursor: 'pointer' }}>Accept</button>
                                 <button onClick={() => setDriverRequest(null)} style={{ background: '#ef4444', color: 'white', border: 'none', padding: '5px 10px', borderRadius: '4px', cursor: 'pointer' }}>Decline</button>
@@ -279,8 +279,22 @@ export default function App() {
                     <pre style={{ margin: 0, whiteSpace: 'pre-wrap' }}>{output || "> Code output will appear here..."}</pre>
                 </div>
 
+                {/* FIXED SUBTITLE OVERLAY */}
                 {(currentSentence || remoteSubtitle) && (
-                    <div style={{ position: 'absolute', bottom: '38%', left: '50%', transform: 'translateX(-50%)', backgroundColor: 'rgba(15, 23, 42, 0.9)', padding: '10px 20px', borderRadius: '8px', zIndex: 10, color: 'white' }}>
+                    <div style={{ 
+                        position: 'absolute', 
+                        bottom: '40%', 
+                        left: '50%', 
+                        transform: 'translateX(-50%)', 
+                        backgroundColor: 'rgba(0, 0, 0, 0.85)', 
+                        padding: '12px 24px', 
+                        borderRadius: '8px', 
+                        zIndex: 999, 
+                        color: 'white',
+                        border: '1px solid #3b82f6',
+                        textAlign: 'center',
+                        maxWidth: '80%'
+                    }}>
                         {currentSentence || remoteSubtitle}
                     </div>
                 )}
@@ -290,7 +304,7 @@ export default function App() {
                         <div ref={draggableNodeRef} style={{
                             position: 'absolute', top: '50px', left: '50px', width: '450px',
                             background: '#1e293b', color: 'white', borderRadius: '12px',
-                            boxShadow: '0 20px 50px rgba(0,0,0,0.5)', zIndex: 100, border: '1px solid #3b82f6'
+                            boxShadow: '0 20px 50px rgba(0,0,0,0.5)', zIndex: 1000, border: '1px solid #3b82f6'
                         }}>
                             <div className="drag-handle" style={{ 
                                 padding: '12px', background: '#3b82f6', cursor: 'move', 
@@ -306,12 +320,7 @@ export default function App() {
                                 <h4 style={{ color: '#60a5fa', marginTop: 0 }}>Approach</h4>
                                 <p style={{ fontSize: '14px', background: '#0f172a', padding: '10px', borderRadius: '6px' }}>{aiData.approach || "N/A"}</p>
                                 <h4 style={{ color: '#60a5fa' }}>Logic</h4>
-                                <p style={{ fontSize: '14px', lineHeight: '1.6' }}>{aiData.logic || aiData.summary}</p>
-                                {aiData.flashcards && aiData.flashcards.map((f, i) => (
-                                    <div key={i} style={{ background: '#334155', padding: '10px', borderRadius: '8px', marginBottom: '8px' }}>
-                                        <strong>Q:</strong> {f.q} <br/> <strong>A:</strong> {f.a}
-                                    </div>
-                                ))}
+                                <p style={{ fontSize: '14px', lineHeight: '1.6' }}>{aiData.logic || aiData.summary || "No summary generated."}</p>
                             </div>
                         </div>
                     </Draggable>
@@ -335,9 +344,15 @@ export default function App() {
                     {isVideoMaximized ? '▶' : '◀'}
                 </button>
 
-                <div ref={jitsiContainerRef} style={{ width: '100%', height: '100%' }}>
+                <div ref={jitsiContainerRef} style={{ width: '100%', height: '100%', display: jitsiActive ? 'block' : 'none' }}>
                     {!jitsiToken && <div style={{ color: '#fff', padding: '20px' }}>🔐 Authenticating Jitsi...</div>}
                 </div>
+                {!jitsiActive && (
+                    <div style={{ height: '100%', display: 'flex', flexDirection: 'column', justifyContent: 'center', alignItems: 'center', background: '#1e293b' }}>
+                        <p>Call Ended</p>
+                        <button onClick={initJitsi} style={{ background: '#3b82f6', color: 'white', padding: '10px', borderRadius: '5px', border: 'none', cursor: 'pointer' }}>Restart Call</button>
+                    </div>
+                )}
             </div>
         </div>
     );

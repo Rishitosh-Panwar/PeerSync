@@ -12,11 +12,11 @@ const Editor = ({ code, setCode, roomId, socket, isDriver }) => {
     const [editorWidth, setEditorWidth] = useState(70); // Percentage of the screen
 
     const languages = [
-        { name: "JavaScript", value: "javascript" },
-        { name: "Python", value: "python" },
-        { name: "Java", value: "java" },
-        { name: "C++", value: "cpp" }
-    ];
+    { name: "Java", value: "java" },
+    { name: "Python", value: "python" },
+    { name: "JavaScript", value: "javascript" },
+    { name: "C++", value: "cpp" } 
+];
 
     const keywords = ["function", "const", "let", "console.log", "import", "return", "if", "else", "def", "print", "class"];
 
