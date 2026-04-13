@@ -34,6 +34,15 @@ mongoose.connect(process.env.MONGO_URI)
 // --- AUTH ROUTES ---
 app.use('/api/auth', authRoutes);
 
+// Add this near the top of your server.js, after app.use() statements
+app.get('/api/health', (req, res) => {
+    res.status(200).json({ 
+        status: 'healthy', 
+        timestamp: new Date().toISOString(),
+        uptime: process.uptime()
+    });
+});
+
 // --- 1. JITSI JWT GENERATION ---
 app.get("/api/jitsi-token", (req, res) => {
   try {

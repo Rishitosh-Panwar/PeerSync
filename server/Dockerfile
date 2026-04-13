@@ -1,18 +1,18 @@
-# Use Node.js LTS
+# server/Dockerfile
 FROM node:20-alpine
 
-# Create app directory
 WORKDIR /usr/src/app
 
-# Install dependencies
+# Copy package files
 COPY package*.json ./
-RUN npm install
 
-# Copy source code
+# Install dependencies
+RUN npm ci --only=production || npm install
+
+# Copy application code
 COPY . .
 
-# Expose the port your app runs on
 EXPOSE 5000
 
-# Start the server
-CMD ["npm", "start"]
+# Use node directly instead of nodemon for production
+CMD ["node", "server.js"]

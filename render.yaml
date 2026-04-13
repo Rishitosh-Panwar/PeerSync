@@ -1,0 +1,68 @@
+# render.yaml - Place this in your project root directory
+
+services:
+  # Backend API Service
+  - type: web
+    name: peersync-backend
+    runtime: image
+    repo: https://github.com/jasmine1711/PeerSync
+    plan: free
+    dockerfilePath: ./server/Dockerfile
+    dockerContext: ./server
+    envVars:
+      - key: MONGO_URI
+        sync: false
+      - key: JWT_SECRET
+        sync: false
+      - key: RESEND_API_KEY
+        sync: false
+      - key: FRONTEND_URL
+        sync: false
+      - key: EMAIL_FROM
+        value: PeerSync <noreply@resend.dev>
+      - key: NODE_ENV
+        value: production
+      - key: GEMINI_API_KEY
+        sync: false
+      - key: JITSI_PRIVATE_KEY
+        sync: false
+    healthCheckPath: /api/health
+    ports:
+      - port: 5000
+        protocol: http
+
+  # Frontend Static Site
+  - type: web
+    name: peersync-frontend
+    runtime: static
+    repo: https://github.com/jasmine1711/PeerSync
+    buildCommand: cd client && npm install && npm run build
+    staticPublishPath: ./client/dist
+    envVars:
+      - key: VITE_BACKEND_URL
+        fromService:
+          name: peersync-backend
+          type: web
+          property: url
+      - key: VITE_FRONTEND_URL
+        fromService:
+          name: peersync-frontend
+          type: web
+          property: url
+    routes:
+      - type: rewrite
+        source: /*
+        destination: /index.html
+
+  # Piston Code Execution Service (if needed)
+  - type: web
+    name: peersync-piston
+    runtime: image
+    repo: https://github.com/jasmine1711/PeerSync
+    plan: free
+    dockerfilePath: ./piston/Dockerfile
+    dockerContext: ./piston
+    healthCheckPath: /health
+    ports:
+      - port: 2000
+        protocol: http
