@@ -10,6 +10,7 @@ import LandingPage from './pages/LandingPage.jsx';
 import AboutUs from './pages/AboutUs.jsx';
 import ContactUs from './pages/ContactUs.jsx';
 import './App.css';
+import AuthSuccess from './pages/AuthSuccess';
 
 ReactDOM.createRoot(document.getElementById('root')).render(
   <React.StrictMode>
@@ -26,6 +27,7 @@ ReactDOM.createRoot(document.getElementById('root')).render(
         <Route path="/dashboard" element={<LandingPage />} />
         <Route path="/room/:roomId" element={<App />} />
         <Route path="*" element={<Navigate to="/" />} />
+        <Route path="/auth/success" element={<AuthSuccess />} />
       </Routes>
     </BrowserRouter>
   </React.StrictMode>

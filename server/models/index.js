@@ -1,30 +1,33 @@
 const mongoose = require("mongoose");
 
-// 1. User Schema: For storing account info
+// User Schema with OTP verification
 const UserSchema = new mongoose.Schema({
     email: { type: String, required: true, unique: true },
-    password: { type: String, required: true },
-    name: { type: String },
+    username: { type: String, required: true, unique: true },
+    passwordHash: { type: String, required: true },
+    phoneNumber: { type: String }, // Optional for SMS OTP
+    isVerified: { type: Boolean, default: false },
+    verifiedAt: { type: Date },
+    lastLogin: { type: Date },
+    refreshToken: { type: String },
+    resetPasswordToken: { type: String },
+    resetPasswordExpiry: { type: Date },
     createdAt: { type: Date, default: Date.now }
 });
 
-// 2. Room Schema: For active or saved coding rooms
 const RoomSchema = new mongoose.Schema({
     roomId: { type: String, required: true, unique: true },
-    owner: { type: String }, // Email or ID of the creator
-    allowedUsers: [String],  // List of emails
+    owner: { type: String },
+    allowedUsers: [String],
     lastCode: { type: String, default: "" },
     createdAt: { type: Date, default: Date.now }
 });
 
-// 3. SessionLog Schema: For storing AI Summaries and Transcripts
 const SessionLogSchema = new mongoose.Schema({
     roomId: { type: String, required: true },
     fullTranscript: { type: String, default: "" },
     generatedSummary: { type: String },
-    generatedFlashcards: [
-        { q: String, a: String }
-    ],
+    generatedFlashcards: [{ q: String, a: String }],
     logic: { type: String },
     approach: { type: String },
     timestamp: { type: Date, default: Date.now }

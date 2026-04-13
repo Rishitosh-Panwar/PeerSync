@@ -14,19 +14,25 @@ const { User, Room, SessionLog } = require("./models/index");
 const app = express();
 const server = http.createServer(app);
 
+// Import auth routes
+const authRoutes = require('./routes/auth');
+
 app.use(express.json());
 
 // FIXED CORS: Added strict matching for Vite ports
 app.use(cors({ 
  origin: ["http://localhost:5173", "http://localhost:5174", "https://fugal-nonsophistically-charis.ngrok-free.dev"], 
   credentials: true,
-  allowedHeaders: ["Content-Type", "Authorization", "Bypass-Tunnel-Reminder"] // Add this line
+  allowedHeaders: ["Content-Type", "Authorization", "Bypass-Tunnel-Reminder"]
 }));
 
 // --- MongoDB Connection ---
 mongoose.connect(process.env.MONGO_URI)
   .then(() => console.log("✅ MongoDB Connected!"))
   .catch(err => console.error("❌ MongoDB Error:", err.message));
+
+// --- AUTH ROUTES ---
+app.use('/api/auth', authRoutes);
 
 // --- 1. JITSI JWT GENERATION ---
 app.get("/api/jitsi-token", (req, res) => {
@@ -58,20 +64,7 @@ app.get("/api/jitsi-token", (req, res) => {
   }
 });
 
-// --- 2. AUTHENTICATION (Mock) ---
-app.post("/api/auth/login", (req, res) => {
-  const { email, password } = req.body;
-  if (email && password) {
-    return res.status(200).json({ 
-      token: "valid-session-token", 
-      user: { email }, 
-      message: "Login Successful" 
-    });
-  }
-  res.status(400).json({ error: "Invalid credentials" });
-});
-
-// --- 3. CODE EXECUTION (DYNAMIC FIX) ---
+// --- 2. CODE EXECUTION (DYNAMIC FIX) ---
 app.post("/api/execute", async (req, res) => {
   const { language, code } = req.body;
   const PISTON_BASE = "http://piston:2000/api/v2";
@@ -136,7 +129,7 @@ app.post("/api/execute", async (req, res) => {
   }
 });
 
-// --- 4. AI SUMMARY (GEMINI 2.5 FLASH) ---
+// --- 3. AI SUMMARY (GEMINI 2.5 FLASH) ---
 const genAI = new GoogleGenerativeAI(process.env.GEMINI_API_KEY);
 const PRIMARY_MODEL = "gemini-2.5-flash"; // Ensuring the model is correct
 
@@ -188,7 +181,7 @@ app.post("/api/summarize", async (req, res) => {
   }
 });
 
-// --- 5. SOCKET.IO ---
+// --- 4. SOCKET.IO ---
 const io = new Server(server, { 
   cors: { 
     origin: "*", // Allows both localhost and the ngrok tunnel during development

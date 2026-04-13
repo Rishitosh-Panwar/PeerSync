@@ -7,6 +7,7 @@ import jsPDF from 'jspdf';
 import axios from 'axios';
 import './App.css';
 
+
 // Get backend URL from environment variable
 const BACKEND_URL = import.meta.env.VITE_BACKEND_URL || "http://localhost:5000";
 
@@ -78,13 +79,53 @@ export default function App() {
     const [connectionStatus, setConnectionStatus] = useState('connecting');
     const [transportType, setTransportType] = useState('unknown');
 
-    // Check if user is authenticated
-    useEffect(() => {
+    // Enhanced auth check with token refresh
+useEffect(() => {
+    const checkAuth = async () => {
         const token = localStorage.getItem('token');
+        const refreshToken = localStorage.getItem('refreshToken');
+        
         if (!token) {
-            navigate('/');
+            navigate('/login');
+            return;
         }
-    }, [navigate]);
+        
+        // Verify token is still valid
+        try {
+            const res = await api.get('/api/auth/me', {
+                headers: { Authorization: `Bearer ${token}` }
+            });
+            
+            if (res.data) {
+                // Token is valid, update user info
+                localStorage.setItem('userName', res.data.username);
+                console.log('Authenticated as:', res.data.username);
+            }
+        } catch (error) {
+            // Token expired, try to refresh
+            if (refreshToken) {
+                try {
+                    const refreshRes = await api.post('/api/auth/refresh-token', { refreshToken });
+                    if (refreshRes.data.token) {
+                        localStorage.setItem('token', refreshRes.data.token);
+                        console.log('Token refreshed successfully');
+                        return;
+                    }
+                } catch (refreshError) {
+                    console.error('Token refresh failed:', refreshError);
+                }
+            }
+            
+            // No valid token, redirect to login
+            localStorage.removeItem('token');
+            localStorage.removeItem('refreshToken');
+            navigate('/login');
+        }
+    };
+    
+    checkAuth();
+}, [navigate]);
+
 
     // Monitor socket connection
     useEffect(() => {
