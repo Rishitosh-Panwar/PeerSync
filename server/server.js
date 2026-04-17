@@ -21,7 +21,7 @@ app.use(express.json());
 
 // FIXED CORS: Added strict matching for Vite ports
 app.use(cors({ 
- origin: ["http://localhost:5173", "http://localhost:5174", "https://fugal-nonsophistically-charis.ngrok-free.dev"], 
+ origin: ["http://localhost:5173", "http://localhost:5174", "https://fugal-nonsophistically-charis.ngrok-free.dev", "https://peersync-frontend.onrender.com"], 
   credentials: true,
   allowedHeaders: ["Content-Type", "Authorization", "Bypass-Tunnel-Reminder"]
 }));
