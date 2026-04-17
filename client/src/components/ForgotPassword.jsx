@@ -8,7 +8,7 @@ export default function ForgotPassword() {
     const [message, setMessage] = useState('');
     const [error, setError] = useState('');
     const navigate = useNavigate();
-    const BACKEND_URL = "http://localhost:5000";
+    const BACKEND_URL = "https://peersync-backend.onrender.com";
 
     const handleSubmit = async (e) => {
         e.preventDefault();

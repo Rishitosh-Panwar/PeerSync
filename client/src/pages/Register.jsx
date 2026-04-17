@@ -11,7 +11,7 @@ export default function Register() {
     const [error, setError] = useState('');
     const [message, setMessage] = useState('');
     const navigate = useNavigate();
-    const BACKEND_URL = "http://localhost:5000";
+    const BACKEND_URL = "https://peersync-backend.onrender.com";
 
     const getPasswordStrength = () => {
         if (password.length === 0) return '';

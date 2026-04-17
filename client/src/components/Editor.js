@@ -100,7 +100,7 @@ const Editor = ({ code, setCode, roomId, socket, isDriver, setIsDriver }) => {
         setLoading(true);
         setOutput("🚀 Running...");
         try {
-            const res = await axios.post("http://localhost:5000/api/execute", { language, code });
+            const res = await axios.post("https://peersync-backend.onrender.com/api/execute", { language, code });
             setOutput(res.data.run.output || "✅ Success (No output).");
         } catch (err) {
             setOutput("❌ Error: Engine Offline.");

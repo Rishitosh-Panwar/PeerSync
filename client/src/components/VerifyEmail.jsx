@@ -7,7 +7,7 @@ export default function VerifyEmail() {
     const [status, setStatus] = useState('verifying');
     const [message, setMessage] = useState('');
     const navigate = useNavigate();
-    const BACKEND_URL = "http://localhost:5000";
+    const BACKEND_URL = "https://peersync-backend.onrender.com";
 
     useEffect(() => {
         const token = searchParams.get('token');

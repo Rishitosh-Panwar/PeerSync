@@ -11,7 +11,7 @@ export default function Login() {
     const [resendLoading, setResendLoading] = useState(false);
     const [countdown, setCountdown] = useState(0);
     const navigate = useNavigate();
-    const BACKEND_URL = "http://localhost:5000";
+    const BACKEND_URL = "https://peersync-backend.onrender.com";
 
     // Check URL for error params
     useEffect(() => {
