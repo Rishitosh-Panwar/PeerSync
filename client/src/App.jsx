@@ -9,7 +9,7 @@ import './App.css';
 
 
 // Get backend URL from environment variable
-const BACKEND_URL = import.meta.env.VITE_BACKEND_URL || "http://localhost:5000";
+const BACKEND_URL = import.meta.env.VITE_BACKEND_URL || "https://peersync-backend.onrender.com";
 
 console.log('🔗 Connecting to backend at:', BACKEND_URL);
 
