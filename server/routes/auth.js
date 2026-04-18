@@ -312,6 +312,51 @@ router.post('/verify-token', async (req, res) => {
     }
 });
 
+// GET LOGIN TOKEN for verified user (for auto-login after verification)
+router.post('/get-login-token', async (req, res) => {
+    try {
+        const { email } = req.body;
+        
+        if (!email) {
+            return res.status(400).json({ error: 'Email required' });
+        }
+        
+        const user = await User.findOne({ email });
+        
+        if (!user) {
+            return res.status(404).json({ error: 'User not found' });
+        }
+        
+        if (!user.isVerified) {
+            return res.status(401).json({ error: 'User not verified' });
+        }
+        
+        // Generate JWT token
+        const jwtToken = jwt.sign(
+            { id: user._id, email: user.email, username: user.username }, 
+            process.env.JWT_SECRET || 'your_super_secret_key_change_this',
+            { expiresIn: '7d' }
+        );
+        
+        // Generate refresh token
+        const refreshToken = crypto.randomBytes(64).toString('hex');
+        user.refreshToken = refreshToken;
+        user.lastLogin = new Date();
+        await user.save();
+        
+        res.json({ 
+            token: jwtToken,
+            refreshToken: refreshToken,
+            username: user.username,
+            email: user.email
+        });
+        
+    } catch (err) {
+        console.error('Get login token error:', err);
+        res.status(500).json({ error: err.message });
+    }
+});
+
 // LOGOUT
 router.post('/logout', async (req, res) => {
     try {

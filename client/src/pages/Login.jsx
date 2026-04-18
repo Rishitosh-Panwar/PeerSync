@@ -20,13 +20,19 @@ export default function Login() {
         if (errorParam) {
             setError(decodeURIComponent(errorParam));
         }
-    }, []);
+        
+        // Check if user is already logged in
+        const token = localStorage.getItem('token');
+        if (token) {
+            navigate('/dashboard');
+        }
+    }, [navigate]);
 
-    // Polling function to check if user is verified
+    // Polling function to check if user is verified and auto-login
     useEffect(() => {
         let pollInterval;
         let verificationAttempts = 0;
-        const MAX_ATTEMPTS = 20; // 60 seconds max (3 seconds * 20)
+        const MAX_ATTEMPTS = 30; // 90 seconds max (3 seconds * 30)
         
         if (isPolling && email) {
             pollInterval = setInterval(async () => {
@@ -43,33 +49,63 @@ export default function Login() {
                     const data = await res.json();
                     
                     if (data.isVerified) {
-                        // User is verified, stop polling
+                        // User is verified! Stop polling and auto-login
                         clearInterval(pollInterval);
                         setIsPolling(false);
-                        setMessage('✅ Email verified! Redirecting to login...');
+                        setMessage('✅ Email verified! Logging you in...');
                         
-                        // Wait a moment then send login link
+                        // Auto-login after verification
                         setTimeout(async () => {
-                            const loginRes = await fetch(`${BACKEND_URL}/api/auth/login`, {
-                                method: 'POST',
-                                headers: { 'Content-Type': 'application/json' },
-                                body: JSON.stringify({ email })
-                            });
-                            
-                            const loginData = await loginRes.json();
-                            
-                            if (loginRes.ok) {
-                                setMessage('Login link sent! Please check your email.');
-                                setNeedsVerification(false);
-                            } else {
-                                setError('Please click "Send Magic Link" again to login.');
+                            try {
+                                const loginRes = await fetch(`${BACKEND_URL}/api/auth/login`, {
+                                    method: 'POST',
+                                    headers: { 'Content-Type': 'application/json' },
+                                    body: JSON.stringify({ email })
+                                });
+                                
+                                const loginData = await loginRes.json();
+                                
+                                if (loginRes.ok && loginData.emailSent) {
+                                    // Wait for magic link to be sent, then we need to get the actual token
+                                    // Since we can't get the token directly, we'll use the debug verify endpoint
+                                    // to get a token for the now-verified user
+                                    setMessage('Generating login token...');
+                                    
+                                    // Get a login token for the verified user
+                                    const tokenRes = await fetch(`${BACKEND_URL}/api/auth/get-login-token`, {
+                                        method: 'POST',
+                                        headers: { 'Content-Type': 'application/json' },
+                                        body: JSON.stringify({ email })
+                                    });
+                                    
+                                    const tokenData = await tokenRes.json();
+                                    
+                                    if (tokenData.token) {
+                                        localStorage.setItem('token', tokenData.token);
+                                        localStorage.setItem('refreshToken', tokenData.refreshToken || '');
+                                        localStorage.setItem('userName', tokenData.username || 'User');
+                                        localStorage.setItem('userEmail', email);
+                                        
+                                        setMessage('Login successful! Redirecting to dashboard...');
+                                        setTimeout(() => {
+                                            navigate('/dashboard');
+                                        }, 1500);
+                                    } else {
+                                        setMessage('Verification complete! Please click "Send Magic Link" to login.');
+                                    }
+                                } else {
+                                    setMessage('Verification complete! Please click "Send Magic Link" to login.');
+                                }
+                            } catch (loginErr) {
+                                console.error('Auto-login error:', loginErr);
+                                setMessage('Verification complete! Please click "Send Magic Link" to login.');
                             }
-                        }, 2000);
+                        }, 1000);
                     } else if (verificationAttempts >= MAX_ATTEMPTS) {
-                        // Timeout after 60 seconds
+                        // Timeout after 90 seconds
                         clearInterval(pollInterval);
                         setIsPolling(false);
-                        setError('Verification timeout. Please click the link in your email and try again.');
+                        setError('Verification timeout. Please click the link in your email and then click "Send Magic Link".');
                     }
                 } catch (err) {
                     console.error('Polling error:', err);
@@ -80,7 +116,7 @@ export default function Login() {
         return () => {
             if (pollInterval) clearInterval(pollInterval);
         };
-    }, [isPolling, email, BACKEND_URL]);
+    }, [isPolling, email, BACKEND_URL, navigate]);
 
     const handleSubmit = async (e) => {
         e.preventDefault();
@@ -188,9 +224,9 @@ export default function Login() {
                     <div className="polling-status">
                         <div className="loading-spinner-small">⏳</div>
                         <p>Waiting for email verification...</p>
-                        <small>Click the link in your email to verify. This page will auto-detect when you're verified.</small>
+                        <small>Click the link in your email to verify. This page will auto-detect and log you in!</small>
                         <div className="polling-progress">
-                            <div className="progress-bar" style={{ width: `${(pollingCount / 20) * 100}%` }}></div>
+                            <div className="progress-bar" style={{ width: `${(pollingCount / 30) * 100}%` }}></div>
                         </div>
                     </div>
                 )}
@@ -222,7 +258,7 @@ export default function Login() {
                         <small>
                             💡 Verification link sent! Please check your email (including spam folder) and click the link.
                             <br />
-                            <strong>This page will automatically detect when you're verified!</strong>
+                            <strong>Once verified, this page will automatically log you in!</strong>
                         </small>
                     </div>
                 )}
