@@ -172,7 +172,7 @@ const sendMagicLinkEmail = async (email, magicToken, isLogin = true) => {
                     </div>
                 </div>
                 <div class="footer">
-                    <p>© 2024 PeerSync. All rights reserved.</p>
+                    <p>© 2026 PeerSync. All rights reserved.</p>
                     <p>Secure, real-time collaborative coding platform</p>
                 </div>
             </div>

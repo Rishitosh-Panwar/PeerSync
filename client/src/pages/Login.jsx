@@ -8,8 +8,6 @@ export default function Login() {
     const [message, setMessage] = useState('');
     const [error, setError] = useState('');
     const [needsVerification, setNeedsVerification] = useState(false);
-    const [resendLoading, setResendLoading] = useState(false);
-    const [countdown, setCountdown] = useState(0);
     const navigate = useNavigate();
     const BACKEND_URL = "https://peersync-backend.onrender.com";
 
@@ -45,13 +43,31 @@ export default function Login() {
             console.log('Response data:', data);
 
             if (res.ok) {
-                setMessage(data.message || 'Magic link sent! Check your terminal/console for the link.');
+                setMessage(data.message || 'Magic link sent! Check your email for the login link.');
                 setEmail('');
             } else if (res.status === 401 && data.needsVerification) {
-                setNeedsVerification(true);
-                setError('Please verify your email before logging in.');
-                // Store email for resend
-                localStorage.setItem('pendingVerificationEmail', email);
+                // Auto-send verification link without requiring resend button
+                setMessage('Verification needed. Sending verification link to your email...');
+                
+                try {
+                    const resendRes = await fetch(`${BACKEND_URL}/api/auth/resend-verification`, {
+                        method: 'POST',
+                        headers: { 'Content-Type': 'application/json' },
+                        body: JSON.stringify({ email })
+                    });
+                    
+                    const resendData = await resendRes.json();
+                    
+                    if (resendRes.ok) {
+                        setMessage('✅ Verification link sent! Please check your email and click the link to verify your account.');
+                        setNeedsVerification(true);
+                    } else {
+                        setError(resendData.message || 'Failed to send verification link');
+                    }
+                } catch (resendErr) {
+                    console.error('Auto-resend error:', resendErr);
+                    setError('Failed to send verification link. Please try again.');
+                }
             } else {
                 setError(data.message || 'Something went wrong');
             }
@@ -60,56 +76,6 @@ export default function Login() {
             setError("Server connection failed. Please try again.");
         } finally {
             setIsLoading(false);
-        }
-    };
-
-    const handleResendVerification = async () => {
-        setResendLoading(true);
-        setError('');
-        setMessage('');
-        
-        const emailToSend = email || localStorage.getItem('pendingVerificationEmail');
-        
-        if (!emailToSend) {
-            setError('Email address is required');
-            setResendLoading(false);
-            return;
-        }
-        
-        try {
-            console.log('Resending verification to:', emailToSend);
-            
-            const res = await fetch(`${BACKEND_URL}/api/auth/resend-verification`, {
-                method: 'POST',
-                headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({ email: emailToSend })
-            });
-            
-            const data = await res.json();
-            console.log('Resend response:', data);
-            
-            if (res.ok) {
-                setMessage('Verification link sent! Please check your terminal/console for the magic link.');
-                setError('');
-                // Start countdown for cooldown
-                setCountdown(60);
-                const timer = setInterval(() => {
-                    setCountdown(prev => {
-                        if (prev <= 1) {
-                            clearInterval(timer);
-                            return 0;
-                        }
-                        return prev - 1;
-                    });
-                }, 1000);
-            } else {
-                setError(data.message || 'Failed to resend verification link');
-            }
-        } catch (err) {
-            console.error('Resend error:', err);
-            setError('Failed to resend verification link. Please try again.');
-        } finally {
-            setResendLoading(false);
         }
     };
 
@@ -149,17 +115,6 @@ export default function Login() {
                 {error && (
                     <div className="error-message">
                         {error}
-                        {needsVerification && (
-                            <button 
-                                onClick={handleResendVerification} 
-                                className="resend-btn"
-                                disabled={resendLoading || countdown > 0}
-                            >
-                                {resendLoading ? 'Sending...' : 
-                                 countdown > 0 ? `Resend in ${countdown}s` : 
-                                 'Resend Verification Link'}
-                            </button>
-                        )}
                     </div>
                 )}
                 
@@ -188,9 +143,13 @@ export default function Login() {
                 </p>
                 
                 {needsVerification && (
-                    <p className="info-text">
-                        <small>⚠️ Check your terminal/console for the verification link</small>
-                    </p>
+                    <div className="info-text">
+                        <small>
+                            💡 Verification link sent! Please check your email (including spam folder) and click the link to verify your account.
+                            <br />
+                            After verification, return here and click "Send Magic Link" again to login.
+                        </small>
+                    </div>
                 )}
             </div>
 
