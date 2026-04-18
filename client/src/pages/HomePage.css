@@ -5,11 +5,13 @@
   width: 100%;
   background: linear-gradient(145deg, #824D69 0%, #522959 50%, #2A114B 100%);
   position: relative;
-  overflow: hidden;
+  overflow-y: auto;
+  overflow-x: hidden;
   font-family: 'Space Grotesk', sans-serif;
   display: flex;
+  flex-direction: column;
   align-items: center;
-  justify-content: center;
+  justify-content: flex-start;
 }
 
 /* Subtle code pattern background */
@@ -108,6 +110,7 @@
   border-radius: 30px;
   border: 1px solid rgba(223, 182, 178, 0.2);
   box-shadow: 0 20px 40px rgba(0, 0, 0, 0.3);
+  margin: 2rem auto;  /* Add margin for spacing when scrolling */
 }
 
 /* Logo with new colors */
@@ -325,6 +328,7 @@
   justify-content: center;
   gap: 3rem;
   animation: fadeInUp 1s ease-out 1.2s both;
+  margin-bottom: 1rem;
 }
 
 .stat-item {
@@ -475,215 +479,7 @@
   }
   
   .home-content {
-    margin: 20px;
+    margin: 20px auto;
     padding: 2rem 1rem;
-  }
-}
-/* Scroll Indicator */
-.scroll-indicator {
-  position: relative;
-  margin-top: 3rem;
-  cursor: pointer;
-  animation: bounce 2s infinite;
-  display: inline-block;
-  text-align: center;
-}
-
-.scroll-indicator span {
-  display: block;
-  color: #DFB6B2;
-  font-size: 0.9rem;
-  margin-bottom: 0.5rem;
-}
-
-.scroll-arrow {
-  font-size: 24px;
-  color: #FAE5D8;
-}
-
-/* Features Section */
-.features-section {
-  width: 100%;
-  padding: 80px 20px;
-  text-align: center;
-  background: rgba(42, 17, 75, 0.5);
-  margin-top: 2rem;
-}
-
-.features-section h2 {
-  font-size: 2.5rem;
-  color: #FAE5D8;
-  margin-bottom: 3rem;
-}
-
-.features-grid {
-  display: grid;
-  grid-template-columns: repeat(auto-fit, minmax(280px, 1fr));
-  gap: 30px;
-  max-width: 1200px;
-  margin: 0 auto;
-}
-
-.feature-card {
-  background: rgba(255, 255, 255, 0.05);
-  backdrop-filter: blur(10px);
-  padding: 30px;
-  border-radius: 16px;
-  border: 1px solid rgba(223, 182, 178, 0.2);
-  transition: all 0.3s ease;
-}
-
-.feature-card:hover {
-  transform: translateY(-10px);
-  border-color: #DFB6B2;
-  box-shadow: 0 10px 30px rgba(0, 0, 0, 0.3);
-}
-
-.feature-icon {
-  font-size: 48px;
-  margin-bottom: 20px;
-}
-
-.feature-card h3 {
-  color: #FAE5D8;
-  margin-bottom: 15px;
-  font-size: 1.3rem;
-}
-
-.feature-card p {
-  color: #DFB6B2;
-  line-height: 1.6;
-}
-
-/* Stats Section */
-.stats-section {
-  display: flex;
-  justify-content: center;
-  gap: 80px;
-  padding: 60px 20px;
-  background: rgba(0, 0, 0, 0.3);
-  width: 100%;
-}
-
-/* About Section */
-.about-section {
-  padding: 80px 20px;
-  text-align: center;
-  max-width: 800px;
-  margin: 0 auto;
-}
-
-.about-section h2 {
-  font-size: 2rem;
-  color: #FAE5D8;
-  margin-bottom: 1.5rem;
-}
-
-.about-section p {
-  color: #DFB6B2;
-  line-height: 1.8;
-  font-size: 1.1rem;
-}
-
-/* Footer */
-.home-footer {
-  text-align: center;
-  padding: 30px;
-  background: rgba(0, 0, 0, 0.5);
-  color: #94a3b8;
-  width: 100%;
-}
-
-/* Scroll Reveal Animation */
-.scroll-reveal {
-  opacity: 0;
-  transform: translateY(30px);
-  transition: all 0.6s ease;
-}
-
-.scroll-reveal.visible {
-  opacity: 1;
-  transform: translateY(0);
-}
-
-/* Polling Status */
-.polling-status {
-  background: rgba(223, 182, 178, 0.1);
-  border-radius: 12px;
-  padding: 15px;
-  margin: 15px 0;
-  text-align: center;
-}
-
-.loading-spinner-small {
-  font-size: 24px;
-  animation: spin 1s linear infinite;
-  display: inline-block;
-  margin-bottom: 10px;
-}
-
-.polling-status p {
-  color: #FAE5D8;
-  margin: 5px 0;
-  font-weight: 500;
-}
-
-.polling-status small {
-  color: #DFB6B2;
-  font-size: 0.8rem;
-}
-
-.polling-progress {
-  margin-top: 10px;
-  height: 4px;
-  background: rgba(255, 255, 255, 0.1);
-  border-radius: 2px;
-  overflow: hidden;
-}
-
-.progress-bar {
-  height: 100%;
-  background: linear-gradient(90deg, #DFB6B2, #FAE5D8);
-  border-radius: 2px;
-  transition: width 0.3s ease;
-}
-
-/* Animations */
-@keyframes bounce {
-  0%, 100% { transform: translateY(0); }
-  50% { transform: translateY(10px); }
-}
-
-@keyframes spin {
-  from { transform: rotate(0deg); }
-  to { transform: rotate(360deg); }
-}
-
-/* Responsive */
-@media (max-width: 768px) {
-  .features-section h2 {
-    font-size: 2rem;
-  }
-  
-  .features-grid {
-    grid-template-columns: 1fr;
-  }
-  
-  .stats-section {
-    flex-direction: column;
-    gap: 30px;
-    align-items: center;
-  }
-  
-  .about-section {
-    padding: 40px 20px;
-  }
-  
-  .about-section p {
-    font-size: 1rem;
-  }
-  
-  .scroll-indicator {
-    margin-top: 2rem;
   }
 }
