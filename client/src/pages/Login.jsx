@@ -14,30 +14,25 @@ export default function Login() {
     const navigate = useNavigate();
     const BACKEND_URL = "https://peersync-backend.onrender.com";
 
-    // Listen for storage events (when verification happens in another tab)
-    useEffect(() => {
-        const handleStorageChange = (e) => {
-            if (e.key === 'auth_verified' && e.newValue === 'true') {
-                console.log('Verification detected in another tab!');
-                // Remove the flag
-                localStorage.removeItem('auth_verified');
-                // Trigger auto-login
-                if (email) {
-                    performAutoLogin(email);
-                }
-            }
-        };
-        
-        window.addEventListener('storage', handleStorageChange);
-        return () => window.removeEventListener('storage', handleStorageChange);
-    }, [email]);
-
-    // Check URL for error params and validate existing token
+    // Check URL for verification success parameter
     useEffect(() => {
         const urlParams = new URLSearchParams(window.location.search);
         const errorParam = urlParams.get('error');
+        const verified = urlParams.get('verified');
+        
         if (errorParam) {
             setError(decodeURIComponent(errorParam));
+        }
+        
+        // If coming back from verification, auto-login
+        if (verified === 'true') {
+            const verifiedEmail = localStorage.getItem('pendingVerificationEmail');
+            if (verifiedEmail) {
+                setMessage('Email verified! Logging you in...');
+                performAutoLogin(verifiedEmail);
+                // Clean URL
+                window.history.replaceState({}, document.title, window.location.pathname);
+            }
         }
         
         // Validate existing token before redirecting
@@ -78,8 +73,6 @@ export default function Login() {
     }, [navigate, BACKEND_URL]);
 
     const performAutoLogin = async (userEmail) => {
-        setMessage('✅ Email verified! Logging you in...');
-        
         try {
             const tokenRes = await fetch(`${BACKEND_URL}/api/auth/get-login-token`, {
                 method: 'POST',
@@ -94,6 +87,7 @@ export default function Login() {
                 localStorage.setItem('refreshToken', tokenData.refreshToken || '');
                 localStorage.setItem('userName', tokenData.username || 'User');
                 localStorage.setItem('userEmail', userEmail);
+                localStorage.removeItem('pendingVerificationEmail');
                 
                 setMessage('Login successful! Redirecting to dashboard...');
                 setTimeout(() => {
@@ -110,7 +104,7 @@ export default function Login() {
         }
     };
 
-    // Polling function to check if user is verified
+    // Polling function to check if user is verified (as backup)
     useEffect(() => {
         let pollInterval;
         let verificationAttempts = 0;
@@ -137,7 +131,7 @@ export default function Login() {
                     } else if (verificationAttempts >= MAX_ATTEMPTS) {
                         clearInterval(pollInterval);
                         setIsPolling(false);
-                        setError('Verification timeout. Please click "Send Magic Link" again.');
+                        setError('Verification timeout. Please check your email and click the link again.');
                     }
                 } catch (err) {
                     console.error('Polling error:', err);
@@ -186,6 +180,8 @@ export default function Login() {
                     if (resendRes.ok) {
                         setMessage('✅ Verification link sent! Please check your email and click the link to verify your account.');
                         setNeedsVerification(true);
+                        // Store email for later use
+                        localStorage.setItem('pendingVerificationEmail', email);
                         setIsPolling(true);
                         setPollingCount(0);
                     } else {
@@ -256,7 +252,7 @@ export default function Login() {
                     <div className="polling-status">
                         <div className="loading-spinner-small">⏳</div>
                         <p>Waiting for email verification...</p>
-                        <small>Click the link in your email. This page will automatically log you in!</small>
+                        <small>Click the link in your email. This page will automatically detect and log you in!</small>
                         <div className="polling-progress">
                             <div className="progress-bar" style={{ width: `${(pollingCount / 30) * 100}%` }}></div>
                         </div>
@@ -290,7 +286,7 @@ export default function Login() {
                         <small>
                             💡 Verification link sent! Please check your email and click the link.
                             <br />
-                            <strong>This page will automatically log you in once verified!</strong>
+                            <strong>After clicking the link, come back to this tab - it will automatically log you in!</strong>
                         </small>
                     </div>
                 )}

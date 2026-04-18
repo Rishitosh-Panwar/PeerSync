@@ -103,7 +103,7 @@ router.post('/login', async (req, res) => {
         
         res.json({ 
             success: true,
-            message: 'Login link sent! Check your console for the magic link.',
+            message: 'Login link sent! Check your email for the login link.',
             emailSent: true
         });
         
@@ -113,10 +113,12 @@ router.post('/login', async (req, res) => {
     }
 });
 
-// MAGIC LINK CALLBACK - Verify and authenticate
+// MAGIC LINK CALLBACK - Verify and authenticate (SAME TAB VERSION)
 router.get('/auth/callback', async (req, res) => {
     try {
         const { token, type } = req.query;
+        
+        console.log('Auth callback received - Type:', type, 'Token:', token ? 'Present' : 'Missing');
         
         if (!token) {
             return res.redirect(`${process.env.FRONTEND_URL}/login?error=invalid_token`);
@@ -143,6 +145,13 @@ router.get('/auth/callback', async (req, res) => {
             user.verifiedAt = new Date();
             await user.save();
             
+            console.log(`✅ User verified: ${user.email}`);
+            
+            // Redirect back to login page with verified flag (SAME TAB - no new tab)
+            // This tells the login page that verification is complete
+            const redirectUrl = `${process.env.FRONTEND_URL}/login?verified=true&email=${encodeURIComponent(user.email)}`;
+            return res.redirect(redirectUrl);
+            
         } else if (type === 'login') {
             // For login, user must exist and be verified
             if (!user) {
@@ -152,25 +161,27 @@ router.get('/auth/callback', async (req, res) => {
             if (!user.isVerified) {
                 return res.redirect(`${process.env.FRONTEND_URL}/login?error=email_not_verified`);
             }
+            
+            // Generate JWT token for auto-login
+            const jwtToken = jwt.sign(
+                { id: user._id, email: user.email, username: user.username }, 
+                process.env.JWT_SECRET || 'your_super_secret_key_change_this',
+                { expiresIn: '7d' }
+            );
+            
+            // Generate refresh token
+            const refreshToken = crypto.randomBytes(64).toString('hex');
+            user.refreshToken = refreshToken;
+            user.lastLogin = new Date();
+            await user.save();
+            
+            // For login, redirect to auth success with tokens
+            const redirectUrl = `${process.env.FRONTEND_URL}/auth/success?token=${jwtToken}&refreshToken=${refreshToken}&username=${encodeURIComponent(user.username)}&email=${encodeURIComponent(user.email)}`;
+            return res.redirect(redirectUrl);
         }
         
-        // Generate JWT token
-        const jwtToken = jwt.sign(
-            { id: user._id, email: user.email, username: user.username }, 
-            process.env.JWT_SECRET || 'your_super_secret_key_change_this',
-            { expiresIn: '7d' }
-        );
-        
-        // Generate refresh token
-        const refreshToken = crypto.randomBytes(64).toString('hex');
-        user.refreshToken = refreshToken;
-        user.lastLogin = new Date();
-        await user.save();
-        
-        // Redirect to frontend with token
-        const redirectUrl = `${process.env.FRONTEND_URL}/auth/success?token=${jwtToken}&refreshToken=${refreshToken}&username=${encodeURIComponent(user.username)}&email=${encodeURIComponent(user.email)}`;
-        
-        res.redirect(redirectUrl);
+        // Default fallback
+        res.redirect(`${process.env.FRONTEND_URL}/login?error=invalid_type`);
         
     } catch (err) {
         console.error('Magic link callback error:', err);
@@ -210,7 +221,7 @@ router.post('/resend-magic-link', async (req, res) => {
     }
 });
 
-// RESEND VERIFICATION (for registration) - FIXED VERSION
+// RESEND VERIFICATION (for registration)
 router.post('/resend-verification', async (req, res) => {
     try {
         const { email } = req.body;
@@ -243,14 +254,14 @@ router.post('/resend-verification', async (req, res) => {
         // Generate new magic link token
         const magicToken = generateMagicToken(email, user._id);
         
-        // Send magic link email (this will log to console)
+        // Send magic link email
         await sendMagicLinkEmail(email, magicToken, false);
         
         console.log(`✅ New verification link sent for: ${email}`);
         
         res.json({ 
             success: true,
-            message: 'Verification link sent! Check your terminal/console for the magic link.'
+            message: 'Verification link sent! Please check your email.'
         });
         
     } catch (err) {
