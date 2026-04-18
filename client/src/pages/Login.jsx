@@ -10,10 +10,11 @@ export default function Login() {
     const [needsVerification, setNeedsVerification] = useState(false);
     const [isPolling, setIsPolling] = useState(false);
     const [pollingCount, setPollingCount] = useState(0);
+    const [isCheckingAuth, setIsCheckingAuth] = useState(true);
     const navigate = useNavigate();
     const BACKEND_URL = "https://peersync-backend.onrender.com";
 
-    // Check URL for error params
+    // Check URL for error params and validate existing token
     useEffect(() => {
         const urlParams = new URLSearchParams(window.location.search);
         const errorParam = urlParams.get('error');
@@ -21,12 +22,48 @@ export default function Login() {
             setError(decodeURIComponent(errorParam));
         }
         
-        // Check if user is already logged in
-        const token = localStorage.getItem('token');
-        if (token) {
-            navigate('/dashboard');
-        }
-    }, [navigate]);
+        // Validate existing token before redirecting
+        const checkExistingAuth = async () => {
+            const token = localStorage.getItem('token');
+            
+            if (!token) {
+                setIsCheckingAuth(false);
+                return;
+            }
+            
+            // Verify if token is still valid
+            try {
+                const res = await fetch(`${BACKEND_URL}/api/auth/verify-token`, {
+                    method: 'POST',
+                    headers: { 
+                        'Content-Type': 'application/json',
+                    },
+                    body: JSON.stringify({ token })
+                });
+                
+                const data = await res.json();
+                
+                if (data.valid) {
+                    // Token is valid, redirect to dashboard
+                    navigate('/dashboard');
+                } else {
+                    // Token is invalid, clear it
+                    localStorage.removeItem('token');
+                    localStorage.removeItem('refreshToken');
+                    localStorage.removeItem('userName');
+                    localStorage.removeItem('userEmail');
+                    setIsCheckingAuth(false);
+                }
+            } catch (err) {
+                console.error('Token validation error:', err);
+                localStorage.removeItem('token');
+                localStorage.removeItem('refreshToken');
+                setIsCheckingAuth(false);
+            }
+        };
+        
+        checkExistingAuth();
+    }, [navigate, BACKEND_URL]);
 
     // Polling function to check if user is verified and auto-login
     useEffect(() => {
@@ -57,42 +94,25 @@ export default function Login() {
                         // Auto-login after verification
                         setTimeout(async () => {
                             try {
-                                const loginRes = await fetch(`${BACKEND_URL}/api/auth/login`, {
+                                // Get login token for the verified user
+                                const tokenRes = await fetch(`${BACKEND_URL}/api/auth/get-login-token`, {
                                     method: 'POST',
                                     headers: { 'Content-Type': 'application/json' },
                                     body: JSON.stringify({ email })
                                 });
                                 
-                                const loginData = await loginRes.json();
+                                const tokenData = await tokenRes.json();
                                 
-                                if (loginRes.ok && loginData.emailSent) {
-                                    // Wait for magic link to be sent, then we need to get the actual token
-                                    // Since we can't get the token directly, we'll use the debug verify endpoint
-                                    // to get a token for the now-verified user
-                                    setMessage('Generating login token...');
+                                if (tokenData.token) {
+                                    localStorage.setItem('token', tokenData.token);
+                                    localStorage.setItem('refreshToken', tokenData.refreshToken || '');
+                                    localStorage.setItem('userName', tokenData.username || 'User');
+                                    localStorage.setItem('userEmail', email);
                                     
-                                    // Get a login token for the verified user
-                                    const tokenRes = await fetch(`${BACKEND_URL}/api/auth/get-login-token`, {
-                                        method: 'POST',
-                                        headers: { 'Content-Type': 'application/json' },
-                                        body: JSON.stringify({ email })
-                                    });
-                                    
-                                    const tokenData = await tokenRes.json();
-                                    
-                                    if (tokenData.token) {
-                                        localStorage.setItem('token', tokenData.token);
-                                        localStorage.setItem('refreshToken', tokenData.refreshToken || '');
-                                        localStorage.setItem('userName', tokenData.username || 'User');
-                                        localStorage.setItem('userEmail', email);
-                                        
-                                        setMessage('Login successful! Redirecting to dashboard...');
-                                        setTimeout(() => {
-                                            navigate('/dashboard');
-                                        }, 1500);
-                                    } else {
-                                        setMessage('Verification complete! Please click "Send Magic Link" to login.');
-                                    }
+                                    setMessage('Login successful! Redirecting to dashboard...');
+                                    setTimeout(() => {
+                                        navigate('/dashboard');
+                                    }, 1500);
                                 } else {
                                     setMessage('Verification complete! Please click "Send Magic Link" to login.');
                                 }
@@ -178,6 +198,19 @@ export default function Login() {
             setIsLoading(false);
         }
     };
+
+    // Show loading while checking auth
+    if (isCheckingAuth) {
+        return (
+            <div className="auth-container">
+                <div className="auth-card">
+                    <div className="loading-spinner">⏳</div>
+                    <h2>Loading...</h2>
+                    <p>Please wait while we verify your session.</p>
+                </div>
+            </div>
+        );
+    }
 
     return (
         <div className="auth-container">
