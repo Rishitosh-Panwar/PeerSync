@@ -8,6 +8,8 @@ export default function Login() {
     const [message, setMessage] = useState('');
     const [error, setError] = useState('');
     const [needsVerification, setNeedsVerification] = useState(false);
+    const [isPolling, setIsPolling] = useState(false);
+    const [pollingCount, setPollingCount] = useState(0);
     const navigate = useNavigate();
     const BACKEND_URL = "https://peersync-backend.onrender.com";
 
@@ -19,6 +21,66 @@ export default function Login() {
             setError(decodeURIComponent(errorParam));
         }
     }, []);
+
+    // Polling function to check if user is verified
+    useEffect(() => {
+        let pollInterval;
+        let verificationAttempts = 0;
+        const MAX_ATTEMPTS = 20; // 60 seconds max (3 seconds * 20)
+        
+        if (isPolling && email) {
+            pollInterval = setInterval(async () => {
+                verificationAttempts++;
+                setPollingCount(verificationAttempts);
+                
+                try {
+                    const res = await fetch(`${BACKEND_URL}/api/auth/check-verification`, {
+                        method: 'POST',
+                        headers: { 'Content-Type': 'application/json' },
+                        body: JSON.stringify({ email })
+                    });
+                    
+                    const data = await res.json();
+                    
+                    if (data.isVerified) {
+                        // User is verified, stop polling
+                        clearInterval(pollInterval);
+                        setIsPolling(false);
+                        setMessage('✅ Email verified! Redirecting to login...');
+                        
+                        // Wait a moment then send login link
+                        setTimeout(async () => {
+                            const loginRes = await fetch(`${BACKEND_URL}/api/auth/login`, {
+                                method: 'POST',
+                                headers: { 'Content-Type': 'application/json' },
+                                body: JSON.stringify({ email })
+                            });
+                            
+                            const loginData = await loginRes.json();
+                            
+                            if (loginRes.ok) {
+                                setMessage('Login link sent! Please check your email.');
+                                setNeedsVerification(false);
+                            } else {
+                                setError('Please click "Send Magic Link" again to login.');
+                            }
+                        }, 2000);
+                    } else if (verificationAttempts >= MAX_ATTEMPTS) {
+                        // Timeout after 60 seconds
+                        clearInterval(pollInterval);
+                        setIsPolling(false);
+                        setError('Verification timeout. Please click the link in your email and try again.');
+                    }
+                } catch (err) {
+                    console.error('Polling error:', err);
+                }
+            }, 3000); // Check every 3 seconds
+        }
+        
+        return () => {
+            if (pollInterval) clearInterval(pollInterval);
+        };
+    }, [isPolling, email, BACKEND_URL]);
 
     const handleSubmit = async (e) => {
         e.preventDefault();
@@ -46,8 +108,8 @@ export default function Login() {
                 setMessage(data.message || 'Magic link sent! Check your email for the login link.');
                 setEmail('');
             } else if (res.status === 401 && data.needsVerification) {
-                // Auto-send verification link without requiring resend button
-                setMessage('Verification needed. Sending verification link to your email...');
+                // Auto-send verification link
+                setMessage('📧 Verification needed. Sending verification link to your email...');
                 
                 try {
                     const resendRes = await fetch(`${BACKEND_URL}/api/auth/resend-verification`, {
@@ -61,6 +123,8 @@ export default function Login() {
                     if (resendRes.ok) {
                         setMessage('✅ Verification link sent! Please check your email and click the link to verify your account.');
                         setNeedsVerification(true);
+                        setIsPolling(true); // Start polling for verification
+                        setPollingCount(0);
                     } else {
                         setError(resendData.message || 'Failed to send verification link');
                     }
@@ -120,6 +184,17 @@ export default function Login() {
                 
                 {message && <div className="success-message">{message}</div>}
 
+                {isPolling && (
+                    <div className="polling-status">
+                        <div className="loading-spinner-small">⏳</div>
+                        <p>Waiting for email verification...</p>
+                        <small>Click the link in your email to verify. This page will auto-detect when you're verified.</small>
+                        <div className="polling-progress">
+                            <div className="progress-bar" style={{ width: `${(pollingCount / 20) * 100}%` }}></div>
+                        </div>
+                    </div>
+                )}
+
                 <form onSubmit={handleSubmit}>
                     <div className="input-group">
                         <label>Email Address</label>
@@ -129,12 +204,12 @@ export default function Login() {
                             value={email}
                             onChange={(e) => setEmail(e.target.value)} 
                             required 
-                            disabled={isLoading}
+                            disabled={isLoading || isPolling}
                         />
                     </div>
 
-                    <button type="submit" className="auth-btn" disabled={isLoading}>
-                        {isLoading ? 'Sending Magic Link...' : 'Send Magic Link ✨'}
+                    <button type="submit" className="auth-btn" disabled={isLoading || isPolling}>
+                        {isLoading ? 'Sending Magic Link...' : isPolling ? 'Waiting for Verification...' : 'Send Magic Link ✨'}
                     </button>
                 </form>
 
@@ -145,9 +220,9 @@ export default function Login() {
                 {needsVerification && (
                     <div className="info-text">
                         <small>
-                            💡 Verification link sent! Please check your email (including spam folder) and click the link to verify your account.
+                            💡 Verification link sent! Please check your email (including spam folder) and click the link.
                             <br />
-                            After verification, return here and click "Send Magic Link" again to login.
+                            <strong>This page will automatically detect when you're verified!</strong>
                         </small>
                     </div>
                 )}

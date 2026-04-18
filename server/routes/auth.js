@@ -262,6 +262,33 @@ router.post('/resend-verification', async (req, res) => {
     }
 });
 
+// Check if user is verified (for polling)
+router.post('/check-verification', async (req, res) => {
+    try {
+        const { email } = req.body;
+        
+        if (!email) {
+            return res.status(400).json({ error: 'Email required' });
+        }
+        
+        const user = await User.findOne({ email });
+        
+        if (!user) {
+            return res.json({ isVerified: false, exists: false });
+        }
+        
+        res.json({ 
+            isVerified: user.isVerified,
+            exists: true,
+            email: user.email
+        });
+        
+    } catch (err) {
+        console.error('Check verification error:', err);
+        res.status(500).json({ error: err.message });
+    }
+});
+
 // VERIFY TOKEN (for frontend to check)
 router.post('/verify-token', async (req, res) => {
     try {
