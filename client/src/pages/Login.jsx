@@ -14,6 +14,24 @@ export default function Login() {
     const navigate = useNavigate();
     const BACKEND_URL = "https://peersync-backend.onrender.com";
 
+    // Listen for storage events (when verification happens in another tab)
+    useEffect(() => {
+        const handleStorageChange = (e) => {
+            if (e.key === 'auth_verified' && e.newValue === 'true') {
+                console.log('Verification detected in another tab!');
+                // Remove the flag
+                localStorage.removeItem('auth_verified');
+                // Trigger auto-login
+                if (email) {
+                    performAutoLogin(email);
+                }
+            }
+        };
+        
+        window.addEventListener('storage', handleStorageChange);
+        return () => window.removeEventListener('storage', handleStorageChange);
+    }, [email]);
+
     // Check URL for error params and validate existing token
     useEffect(() => {
         const urlParams = new URLSearchParams(window.location.search);
@@ -31,7 +49,6 @@ export default function Login() {
                 return;
             }
             
-            // Verify if token is still valid
             try {
                 const res = await fetch(`${BACKEND_URL}/api/auth/verify-token`, {
                     method: 'POST',
@@ -43,21 +60,16 @@ export default function Login() {
                 
                 const data = await res.json();
                 
-                if (data.valid) {
-                    // Token is valid, redirect to dashboard
+                if (data.valid && data.user) {
                     navigate('/dashboard');
                 } else {
-                    // Token is invalid, clear it
-                    localStorage.removeItem('token');
-                    localStorage.removeItem('refreshToken');
-                    localStorage.removeItem('userName');
-                    localStorage.removeItem('userEmail');
+                    localStorage.clear();
+                    sessionStorage.clear();
                     setIsCheckingAuth(false);
                 }
             } catch (err) {
-                console.error('Token validation error:', err);
-                localStorage.removeItem('token');
-                localStorage.removeItem('refreshToken');
+                localStorage.clear();
+                sessionStorage.clear();
                 setIsCheckingAuth(false);
             }
         };
@@ -65,11 +77,44 @@ export default function Login() {
         checkExistingAuth();
     }, [navigate, BACKEND_URL]);
 
-    // Polling function to check if user is verified and auto-login
+    const performAutoLogin = async (userEmail) => {
+        setMessage('✅ Email verified! Logging you in...');
+        
+        try {
+            const tokenRes = await fetch(`${BACKEND_URL}/api/auth/get-login-token`, {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ email: userEmail })
+            });
+            
+            const tokenData = await tokenRes.json();
+            
+            if (tokenData.token) {
+                localStorage.setItem('token', tokenData.token);
+                localStorage.setItem('refreshToken', tokenData.refreshToken || '');
+                localStorage.setItem('userName', tokenData.username || 'User');
+                localStorage.setItem('userEmail', userEmail);
+                
+                setMessage('Login successful! Redirecting to dashboard...');
+                setTimeout(() => {
+                    navigate('/dashboard');
+                }, 1500);
+            } else {
+                setMessage('Verification complete! Please click "Send Magic Link" to login.');
+                setIsPolling(false);
+            }
+        } catch (loginErr) {
+            console.error('Auto-login error:', loginErr);
+            setMessage('Verification complete! Please click "Send Magic Link" to login.');
+            setIsPolling(false);
+        }
+    };
+
+    // Polling function to check if user is verified
     useEffect(() => {
         let pollInterval;
         let verificationAttempts = 0;
-        const MAX_ATTEMPTS = 30; // 90 seconds max (3 seconds * 30)
+        const MAX_ATTEMPTS = 30;
         
         if (isPolling && email) {
             pollInterval = setInterval(async () => {
@@ -86,57 +131,24 @@ export default function Login() {
                     const data = await res.json();
                     
                     if (data.isVerified) {
-                        // User is verified! Stop polling and auto-login
                         clearInterval(pollInterval);
                         setIsPolling(false);
-                        setMessage('✅ Email verified! Logging you in...');
-                        
-                        // Auto-login after verification
-                        setTimeout(async () => {
-                            try {
-                                // Get login token for the verified user
-                                const tokenRes = await fetch(`${BACKEND_URL}/api/auth/get-login-token`, {
-                                    method: 'POST',
-                                    headers: { 'Content-Type': 'application/json' },
-                                    body: JSON.stringify({ email })
-                                });
-                                
-                                const tokenData = await tokenRes.json();
-                                
-                                if (tokenData.token) {
-                                    localStorage.setItem('token', tokenData.token);
-                                    localStorage.setItem('refreshToken', tokenData.refreshToken || '');
-                                    localStorage.setItem('userName', tokenData.username || 'User');
-                                    localStorage.setItem('userEmail', email);
-                                    
-                                    setMessage('Login successful! Redirecting to dashboard...');
-                                    setTimeout(() => {
-                                        navigate('/dashboard');
-                                    }, 1500);
-                                } else {
-                                    setMessage('Verification complete! Please click "Send Magic Link" to login.');
-                                }
-                            } catch (loginErr) {
-                                console.error('Auto-login error:', loginErr);
-                                setMessage('Verification complete! Please click "Send Magic Link" to login.');
-                            }
-                        }, 1000);
+                        await performAutoLogin(email);
                     } else if (verificationAttempts >= MAX_ATTEMPTS) {
-                        // Timeout after 90 seconds
                         clearInterval(pollInterval);
                         setIsPolling(false);
-                        setError('Verification timeout. Please click the link in your email and then click "Send Magic Link".');
+                        setError('Verification timeout. Please click "Send Magic Link" again.');
                     }
                 } catch (err) {
                     console.error('Polling error:', err);
                 }
-            }, 3000); // Check every 3 seconds
+            }, 3000);
         }
         
         return () => {
             if (pollInterval) clearInterval(pollInterval);
         };
-    }, [isPolling, email, BACKEND_URL, navigate]);
+    }, [isPolling, email, BACKEND_URL]);
 
     const handleSubmit = async (e) => {
         e.preventDefault();
@@ -146,8 +158,6 @@ export default function Login() {
         setNeedsVerification(false);
         
         try {
-            console.log('Sending login request for:', email);
-            
             const res = await fetch(`${BACKEND_URL}/api/auth/login`, {
                 method: 'POST',
                 headers: { 
@@ -156,15 +166,12 @@ export default function Login() {
                 body: JSON.stringify({ email })
             });
 
-            console.log('Response status:', res.status);
             const data = await res.json();
-            console.log('Response data:', data);
 
             if (res.ok) {
-                setMessage(data.message || 'Magic link sent! Check your email for the login link.');
+                setMessage('Magic link sent! Check your email for the login link.');
                 setEmail('');
             } else if (res.status === 401 && data.needsVerification) {
-                // Auto-send verification link
                 setMessage('📧 Verification needed. Sending verification link to your email...');
                 
                 try {
@@ -179,7 +186,7 @@ export default function Login() {
                     if (resendRes.ok) {
                         setMessage('✅ Verification link sent! Please check your email and click the link to verify your account.');
                         setNeedsVerification(true);
-                        setIsPolling(true); // Start polling for verification
+                        setIsPolling(true);
                         setPollingCount(0);
                     } else {
                         setError(resendData.message || 'Failed to send verification link');
@@ -199,7 +206,6 @@ export default function Login() {
         }
     };
 
-    // Show loading while checking auth
     if (isCheckingAuth) {
         return (
             <div className="auth-container">
@@ -214,7 +220,6 @@ export default function Login() {
 
     return (
         <div className="auth-container">
-            {/* Floating particles */}
             <div className="floating-particles">
                 {[...Array(20)].map((_, i) => (
                     <div key={i} className="particle" style={{
@@ -227,7 +232,6 @@ export default function Login() {
                 ))}
             </div>
 
-            {/* Back to Home button */}
             <div className="back-home">
                 <button className="back-home-btn" onClick={() => navigate('/')}>
                     <svg className="back-arrow" viewBox="0 0 24 24">
@@ -245,19 +249,14 @@ export default function Login() {
                     Enter your email to receive a magic login link
                 </p>
 
-                {error && (
-                    <div className="error-message">
-                        {error}
-                    </div>
-                )}
-                
+                {error && <div className="error-message">{error}</div>}
                 {message && <div className="success-message">{message}</div>}
 
                 {isPolling && (
                     <div className="polling-status">
                         <div className="loading-spinner-small">⏳</div>
                         <p>Waiting for email verification...</p>
-                        <small>Click the link in your email to verify. This page will auto-detect and log you in!</small>
+                        <small>Click the link in your email. This page will automatically log you in!</small>
                         <div className="polling-progress">
                             <div className="progress-bar" style={{ width: `${(pollingCount / 30) * 100}%` }}></div>
                         </div>
@@ -289,15 +288,14 @@ export default function Login() {
                 {needsVerification && (
                     <div className="info-text">
                         <small>
-                            💡 Verification link sent! Please check your email (including spam folder) and click the link.
+                            💡 Verification link sent! Please check your email and click the link.
                             <br />
-                            <strong>Once verified, this page will automatically log you in!</strong>
+                            <strong>This page will automatically log you in once verified!</strong>
                         </small>
                     </div>
                 )}
             </div>
 
-            {/* Floating Shapes */}
             <div className="floating-shapes">
                 <div className="shape shape-1"></div>
                 <div className="shape shape-2"></div>

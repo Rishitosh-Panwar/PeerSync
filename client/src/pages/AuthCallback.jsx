@@ -25,9 +25,16 @@ export default function AuthCallback() {
         
         console.log('Redirecting to backend callback:', callbackUrl);
         
-        // Open in same tab or close after verification?
-        // For better UX, we'll show a success message and close after 3 seconds
+        // Set a flag in localStorage BEFORE redirecting
+        localStorage.setItem('auth_verified', 'true');
+        
+        // Redirect to backend callback
         window.location.href = callbackUrl;
+        
+        // Close this tab after 3 seconds (it will redirect anyway)
+        setTimeout(() => {
+            window.close();
+        }, 3000);
         
     }, [searchParams, navigate]);
 
@@ -37,7 +44,7 @@ export default function AuthCallback() {
                 <div className="loading-spinner">⏳</div>
                 <h2>Verifying Your Account...</h2>
                 <p>Please wait while we verify your email.</p>
-                <p><small>You can close this tab after verification.</small></p>
+                <p><small>This tab will close automatically after verification.</small></p>
             </div>
         </div>
     );
