@@ -19,20 +19,20 @@ export default function Login() {
         const urlParams = new URLSearchParams(window.location.search);
         const errorParam = urlParams.get('error');
         const verified = urlParams.get('verified');
+        const verifiedEmail = urlParams.get('email');
         
         if (errorParam) {
             setError(decodeURIComponent(errorParam));
         }
         
         // If coming back from verification, auto-login
-        if (verified === 'true') {
-            const verifiedEmail = localStorage.getItem('pendingVerificationEmail');
-            if (verifiedEmail) {
-                setMessage('Email verified! Logging you in...');
-                performAutoLogin(verifiedEmail);
-                // Clean URL
-                window.history.replaceState({}, document.title, window.location.pathname);
-            }
+        if (verified === 'true' && verifiedEmail) {
+            console.log('Verification detected! Auto-logging in:', verifiedEmail);
+            setMessage('Email verified! Logging you in...');
+            performAutoLogin(verifiedEmail);
+            // Clean URL without refreshing
+            window.history.replaceState({}, document.title, window.location.pathname);
+            return;
         }
         
         // Validate existing token before redirecting
@@ -87,24 +87,23 @@ export default function Login() {
                 localStorage.setItem('refreshToken', tokenData.refreshToken || '');
                 localStorage.setItem('userName', tokenData.username || 'User');
                 localStorage.setItem('userEmail', userEmail);
-                localStorage.removeItem('pendingVerificationEmail');
                 
                 setMessage('Login successful! Redirecting to dashboard...');
                 setTimeout(() => {
                     navigate('/dashboard');
                 }, 1500);
             } else {
-                setMessage('Verification complete! Please click "Send Magic Link" to login.');
+                setError('Auto-login failed. Please try again.');
                 setIsPolling(false);
             }
         } catch (loginErr) {
             console.error('Auto-login error:', loginErr);
-            setMessage('Verification complete! Please click "Send Magic Link" to login.');
+            setError('Auto-login failed. Please try clicking "Send Magic Link" again.');
             setIsPolling(false);
         }
     };
 
-    // Polling function to check if user is verified (as backup)
+    // Polling function as backup
     useEffect(() => {
         let pollInterval;
         let verificationAttempts = 0;
@@ -180,8 +179,6 @@ export default function Login() {
                     if (resendRes.ok) {
                         setMessage('✅ Verification link sent! Please check your email and click the link to verify your account.');
                         setNeedsVerification(true);
-                        // Store email for later use
-                        localStorage.setItem('pendingVerificationEmail', email);
                         setIsPolling(true);
                         setPollingCount(0);
                     } else {
@@ -286,7 +283,7 @@ export default function Login() {
                         <small>
                             💡 Verification link sent! Please check your email and click the link.
                             <br />
-                            <strong>After clicking the link, come back to this tab - it will automatically log you in!</strong>
+                            <strong>After clicking the link, you will be automatically logged in!</strong>
                         </small>
                     </div>
                 )}

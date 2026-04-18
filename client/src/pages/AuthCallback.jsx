@@ -18,14 +18,14 @@ export default function AuthCallback() {
             return;
         }
         
-        // Forward to backend callback endpoint
+        // Forward to backend callback endpoint (this will redirect back to login with verified=true)
         const backendUrl = import.meta.env.VITE_BACKEND_URL || 'https://peersync-backend.onrender.com';
         const callbackUrl = `${backendUrl}/api/auth/auth/callback?token=${token}&type=${type}`;
         
         console.log('Redirecting to backend for verification...');
         
-        // Redirect to backend callback (this will verify and redirect back to login with ?verified=true)
-        window.location.href = callbackUrl;
+        // THIS REPLACES THE CURRENT PAGE (same tab)
+        window.location.replace(callbackUrl);
         
     }, [searchParams, navigate]);
 
@@ -35,7 +35,7 @@ export default function AuthCallback() {
                 <div className="loading-spinner">⏳</div>
                 <h2>Verifying Your Email...</h2>
                 <p>Please wait while we verify your email address.</p>
-                <p><small>You will be redirected back to the login page automatically.</small></p>
+                <p><small>You will be automatically logged in after verification.</small></p>
             </div>
         </div>
     );
