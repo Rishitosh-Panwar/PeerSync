@@ -7,6 +7,140 @@ const { generateMagicToken, verifyMagicToken, sendMagicLinkEmail } = require('..
 
 const router = express.Router();
 
+// ============ PASSWORD-BASED AUTHENTICATION ============
+
+// REGISTER WITH PASSWORD
+router.post('/register-password', async (req, res) => {
+    try {
+        const { username, email, password } = req.body;
+        
+        // Validate input
+        if (!username || !email || !password) {
+            return res.status(400).json({ message: 'All fields are required' });
+        }
+        
+        if (password.length < 6) {
+            return res.status(400).json({ message: 'Password must be at least 6 characters' });
+        }
+        
+        // Check if user exists
+        const existingUser = await User.findOne({ $or: [{ email }, { username }] });
+        if (existingUser) {
+            return res.status(400).json({ 
+                message: existingUser.email === email ? 'Email already registered' : 'Username already taken' 
+            });
+        }
+        
+        // Hash password
+        const salt = await bcrypt.genSalt(10);
+        const passwordHash = await bcrypt.hash(password, salt);
+        
+        // Create user (automatically verified for password registration)
+        const newUser = await User.create({ 
+            username, 
+            email, 
+            passwordHash,
+            isVerified: true,  // Auto-verified for password registration
+            verifiedAt: new Date(),
+            createdAt: new Date()
+        });
+        
+        // Generate JWT token
+        const token = jwt.sign(
+            { id: newUser._id, email: newUser.email, username: newUser.username }, 
+            process.env.JWT_SECRET || 'your_super_secret_key_change_this',
+            { expiresIn: '7d' }
+        );
+        
+        // Generate refresh token
+        const refreshToken = crypto.randomBytes(64).toString('hex');
+        newUser.refreshToken = refreshToken;
+        await newUser.save();
+        
+        res.status(201).json({ 
+            success: true,
+            message: 'Registration successful!',
+            token,
+            refreshToken,
+            user: {
+                id: newUser._id,
+                username: newUser.username,
+                email: newUser.email
+            }
+        });
+        
+    } catch (err) {
+        console.error('Password registration error:', err);
+        res.status(500).json({ error: err.message });
+    }
+});
+
+// LOGIN WITH PASSWORD
+router.post('/login-password', async (req, res) => {
+    try {
+        const { email, password } = req.body;
+        
+        console.log('Password login attempt for email:', email);
+        
+        if (!email || !password) {
+            return res.status(400).json({ message: 'Email and password are required' });
+        }
+        
+        // Find user by email
+        const user = await User.findOne({ email });
+        
+        if (!user) {
+            return res.status(401).json({ message: 'Invalid email or password' });
+        }
+        
+        // Check if password matches
+        const isPasswordValid = await bcrypt.compare(password, user.passwordHash);
+        if (!isPasswordValid) {
+            return res.status(401).json({ message: 'Invalid email or password' });
+        }
+        
+        // Check if email is verified (for existing magic link users who want to add password)
+        if (!user.isVerified) {
+            return res.status(401).json({ 
+                message: 'Please verify your email first. Check your inbox for verification link.',
+                needsVerification: true,
+                email: user.email
+            });
+        }
+        
+        // Generate JWT token
+        const token = jwt.sign(
+            { id: user._id, email: user.email, username: user.username }, 
+            process.env.JWT_SECRET || 'your_super_secret_key_change_this',
+            { expiresIn: '7d' }
+        );
+        
+        // Generate refresh token
+        const refreshToken = crypto.randomBytes(64).toString('hex');
+        user.refreshToken = refreshToken;
+        user.lastLogin = new Date();
+        await user.save();
+        
+        res.json({ 
+            success: true,
+            message: 'Login successful!',
+            token,
+            refreshToken,
+            user: {
+                id: user._id,
+                username: user.username,
+                email: user.email
+            }
+        });
+        
+    } catch (err) {
+        console.error('Password login error:', err);
+        res.status(500).json({ error: err.message });
+    }
+});
+
+// ============ MAGIC LINK AUTHENTICATION (Original) ============
+
 // REGISTER - Send magic link for verification
 router.post('/register', async (req, res) => {
     try {
@@ -62,12 +196,12 @@ router.post('/register', async (req, res) => {
     }
 });
 
-// LOGIN - Send magic link (passwordless - NO PASSWORD NEEDED)
+// LOGIN - Send magic link (passwordless)
 router.post('/login', async (req, res) => {
     try {
         const { email } = req.body;
         
-        console.log('Login attempt for email:', email);
+        console.log('Magic link login attempt for email:', email);
         
         if (!email) {
             return res.status(400).json({ message: 'Email is required' });
@@ -113,7 +247,7 @@ router.post('/login', async (req, res) => {
     }
 });
 
-// MAGIC LINK CALLBACK - Verify and authenticate (SAME TAB VERSION)
+// MAGIC LINK CALLBACK - Verify and authenticate
 router.get('/auth/callback', async (req, res) => {
     try {
         const { token, type } = req.query;
@@ -137,7 +271,7 @@ router.get('/auth/callback', async (req, res) => {
         if (type === 'register') {
             // For registration, user should exist but not verified
             if (!user) {
-                return res.redirect(`${process.env.FRONTEND_URL}/register?error=user_not_found`);
+                return res.redirect(`${process.env.FRONTEND_URL}/login?error=user_not_found`);
             }
             
             // Mark user as verified
@@ -147,8 +281,7 @@ router.get('/auth/callback', async (req, res) => {
             
             console.log(`✅ User verified: ${user.email}`);
             
-            // Redirect back to login page with verified flag (SAME TAB - no new tab)
-            // This tells the login page that verification is complete
+            // Redirect back to login page with verified flag
             const redirectUrl = `${process.env.FRONTEND_URL}/login?verified=true&email=${encodeURIComponent(user.email)}`;
             return res.redirect(redirectUrl);
             
@@ -175,7 +308,7 @@ router.get('/auth/callback', async (req, res) => {
             user.lastLogin = new Date();
             await user.save();
             
-            // For login, redirect to auth success with tokens
+            // Redirect to auth success with tokens
             const redirectUrl = `${process.env.FRONTEND_URL}/auth/success?token=${jwtToken}&refreshToken=${refreshToken}&username=${encodeURIComponent(user.username)}&email=${encodeURIComponent(user.email)}`;
             return res.redirect(redirectUrl);
         }
@@ -406,6 +539,43 @@ router.get('/me', verifyToken, async (req, res) => {
         const user = await User.findById(req.user.id).select('-passwordHash -refreshToken');
         res.json(user);
     } catch (err) {
+        res.status(500).json({ error: err.message });
+    }
+});
+
+// ADD PASSWORD TO EXISTING MAGIC LINK USER
+router.post('/add-password', verifyToken, async (req, res) => {
+    try {
+        const { currentPassword, newPassword } = req.body;
+        
+        if (!newPassword || newPassword.length < 6) {
+            return res.status(400).json({ message: 'Password must be at least 6 characters' });
+        }
+        
+        const user = await User.findById(req.user.id);
+        
+        // If user already has a password, verify current password
+        if (user.passwordHash && currentPassword) {
+            const isValid = await bcrypt.compare(currentPassword, user.passwordHash);
+            if (!isValid) {
+                return res.status(401).json({ message: 'Current password is incorrect' });
+            }
+        }
+        
+        // Hash new password
+        const salt = await bcrypt.genSalt(10);
+        const passwordHash = await bcrypt.hash(newPassword, salt);
+        
+        user.passwordHash = passwordHash;
+        await user.save();
+        
+        res.json({ 
+            success: true,
+            message: 'Password added successfully! You can now login with password.'
+        });
+        
+    } catch (err) {
+        console.error('Add password error:', err);
         res.status(500).json({ error: err.message });
     }
 });

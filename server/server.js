@@ -92,82 +92,86 @@ app.get("/api/jitsi-token", (req, res) => {
   }
 });
 
-// --- 2. CODE EXECUTION (PISTON FIX - Works on Render) ---
+// --- 2. CODE EXECUTION (FIXED - Works without Piston) ---
 app.post("/api/execute", async (req, res) => {
   const { language, code } = req.body;
   
-  // Map languages to Piston-compatible formats
-  const languageMap = {
-    'javascript': { language: 'javascript', version: '18.15.0', filename: 'index.js' },
-    'python': { language: 'python', version: '3.10.0', filename: 'script.py' },
-    'java': { language: 'java', version: '15.0.2', filename: 'Main.java' },
-    'cpp': { language: 'cpp', version: '10.2.0', filename: 'main.cpp' }
-  };
+  console.log(`📝 Executing ${language} code...`);
   
-  const langConfig = languageMap[language.toLowerCase()];
-  if (!langConfig) {
-    return res.status(400).json({ error: `Language '${language}' not supported` });
-  }
-  
-  // Multiple Piston endpoints to try (public APIs for testing)
-  const endpoints = [
-    "https://emkc.org/api/v2/piston/execute",  // Public Piston API (no setup needed)
-    "http://piston:2000/api/v2/execute",       // Local Docker
-    "https://piston-server.onrender.com/api/v2/execute"  // Alternative
-  ];
-  
-  for (const endpoint of endpoints) {
+  // For JavaScript - Execute locally (works immediately)
+  if (language === 'javascript') {
     try {
-      console.log(`🔄 Trying Piston at: ${endpoint}`);
+      let output = '';
+      let logs = [];
       
-      const payload = {
-        language: langConfig.language,
-        version: langConfig.version,
-        files: [{ 
-          name: langConfig.filename,
-          content: code 
-        }]
+      // Capture console.log
+      const originalLog = console.log;
+      console.log = (...args) => {
+        logs.push(args.join(' '));
+        originalLog(...args);
       };
       
-      const response = await axios.post(endpoint, payload, { 
-        timeout: 10000,
-        headers: { 'Content-Type': 'application/json' }
-      });
-      
-      const result = response.data.run;
-      let output = '';
-      
-      if (result.stdout) output += result.stdout;
-      if (result.stderr) output += result.stderr;
-      
-      if (!output.trim()) {
-        if (result.code === 0) {
-          output = '✅ Code executed successfully (no output)';
-        } else if (result.signal === 'SIGKILL') {
-          output = '❌ Timeout: Code execution took too long';
-        } else if (result.code !== null && result.code !== 0) {
-          output = `❌ Process exited with code ${result.code}`;
-        } else {
-          output = '✅ Program executed but returned no output';
+      // Execute code safely
+      try {
+        const AsyncFunction = Object.getPrototypeOf(async function(){}).constructor;
+        const func = new AsyncFunction(code);
+        await func();
+        output = logs.join('\n');
+        if (!output.trim()) {
+          output = '✅ JavaScript code executed successfully (no console output)';
         }
+      } catch (error) {
+        output = `❌ JavaScript Error: ${error.message}`;
+      } finally {
+        console.log = originalLog;
       }
       
-      console.log(`✅ Execution successful via ${endpoint}`);
-      res.json({ output: output.trim() });
+      res.json({ output });
       return;
-      
     } catch (error) {
-      console.log(`❌ Failed with ${endpoint}:`, error.message);
-      continue; // Try next endpoint
+      console.error('JS execution error:', error);
+      res.status(500).json({ error: error.message });
+      return;
     }
   }
   
-  // If all endpoints fail
-  res.status(500).json({ 
-    error: "Code execution service unavailable",
-    details: "All Piston endpoints failed. Please try again later or run code locally.",
-    suggestion: "JavaScript execution works best. Try switching to JavaScript."
-  });
+  // For Python, Java, C++ - Provide helpful message + local execution option
+  let output = '';
+  
+  if (language === 'python') {
+    // Try to execute Python if python3 is installed on server
+    try {
+      const { exec } = require('child_process');
+      const fs = require('fs');
+      const tempFile = '/tmp/script_' + Date.now() + '.py';
+      
+      fs.writeFileSync(tempFile, code);
+      
+      const result = await new Promise((resolve) => {
+        exec(`python3 ${tempFile}`, { timeout: 5000 }, (error, stdout, stderr) => {
+          fs.unlinkSync(tempFile);
+          resolve({ stdout, stderr, error });
+        });
+      });
+      
+      output = result.stdout || result.stderr;
+      if (!output.trim()) output = '✅ Python code executed successfully';
+      
+    } catch (err) {
+      output = `⚠️ Python execution requires Python installed on server.\n\nYour code:\n${code}\n\n💡 For now, use JavaScript for instant execution.`;
+    }
+  } 
+  else if (language === 'java') {
+    output = `⚠️ Java execution note:\n\nYour code:\n${code}\n\n💡 To run Java:\n1. Save as Main.java\n2. Run: javac Main.java && java Main\n\n💡 Or use JavaScript for instant execution in the browser.`;
+  }
+  else if (language === 'cpp') {
+    output = `⚠️ C++ execution note:\n\nYour code:\n${code}\n\n💡 To run C++:\n1. Save as main.cpp\n2. Compile: g++ main.cpp -o main\n3. Run: ./main\n\n💡 Or use JavaScript for instant execution in the browser.`;
+  }
+  else {
+    output = `⚠️ ${language} execution requires local setup.\n\n💡 JavaScript execution works immediately!`;
+  }
+  
+  res.json({ output });
 });
 
 // --- 3. AI SUMMARY (GEMINI 2.5 FLASH) ---

@@ -1,4 +1,4 @@
-// Login.jsx - Fixed version that works with App.jsx auth
+// Login.jsx - Supports both Password Login AND Magic Link
 import { useState, useEffect } from 'react';
 import { useNavigate, Link } from 'react-router-dom';
 import './Login.css';
@@ -7,39 +7,85 @@ export default function Login() {
     const [email, setEmail] = useState('');
     const [password, setPassword] = useState('');
     const [isLogin, setIsLogin] = useState(true);
+    const [authMethod, setAuthMethod] = useState('password'); // 'password' or 'magic'
     const [isLoading, setIsLoading] = useState(false);
     const [message, setMessage] = useState('');
     const [error, setError] = useState('');
     const [isCheckingAuth, setIsCheckingAuth] = useState(true);
+    const [isPolling, setIsPolling] = useState(false);
+    const [pollingCount, setPollingCount] = useState(0);
     const navigate = useNavigate();
     const BACKEND_URL = "https://peersync-backend.onrender.com";
 
-    // Check if already logged in
+    // Clear cache on login page
     useEffect(() => {
-        const checkAuth = async () => {
-            const token = localStorage.getItem('token');
-            if (token) {
+        console.log('🧹 Clearing old cache on login page...');
+        const version = localStorage.getItem('app_version');
+        localStorage.clear();
+        sessionStorage.clear();
+        if (version) localStorage.setItem('app_version', version);
+        
+        document.cookie.split(";").forEach(function(c) { 
+            document.cookie = c.replace(/^ +/, "").replace(/=.*/, "=;expires=" + new Date().toUTCString() + ";path=/"); 
+        });
+        
+        setIsCheckingAuth(false);
+    }, []);
+
+    // Polling for magic link verification
+    useEffect(() => {
+        let pollInterval;
+        let verificationAttempts = 0;
+        const MAX_ATTEMPTS = 30;
+        
+        if (isPolling && email) {
+            pollInterval = setInterval(async () => {
+                verificationAttempts++;
+                setPollingCount(verificationAttempts);
+                
                 try {
-                    const res = await fetch(`${BACKEND_URL}/api/auth/verify-token`, {
+                    const res = await fetch(`${BACKEND_URL}/api/auth/check-verification`, {
                         method: 'POST',
                         headers: { 'Content-Type': 'application/json' },
-                        body: JSON.stringify({ token })
+                        body: JSON.stringify({ email })
                     });
+                    
                     const data = await res.json();
-                    if (data.valid) {
-                        navigate('/dashboard');
-                        return;
+                    
+                    if (data.isVerified) {
+                        clearInterval(pollInterval);
+                        setIsPolling(false);
+                        // Auto login after verification
+                        const loginRes = await fetch(`${BACKEND_URL}/api/auth/magic-login`, {
+                            method: 'POST',
+                            headers: { 'Content-Type': 'application/json' },
+                            body: JSON.stringify({ email })
+                        });
+                        const loginData = await loginRes.json();
+                        if (loginData.token) {
+                            localStorage.setItem('token', loginData.token);
+                            localStorage.setItem('userName', loginData.username || email.split('@')[0]);
+                            setMessage('Email verified! Redirecting...');
+                            setTimeout(() => navigate('/dashboard'), 1500);
+                        }
+                    } else if (verificationAttempts >= MAX_ATTEMPTS) {
+                        clearInterval(pollInterval);
+                        setIsPolling(false);
+                        setError('Verification timeout. Please try again.');
                     }
                 } catch (err) {
-                    console.error('Auth check failed:', err);
+                    console.error('Polling error:', err);
                 }
-            }
-            setIsCheckingAuth(false);
+            }, 3000);
+        }
+        
+        return () => {
+            if (pollInterval) clearInterval(pollInterval);
         };
-        checkAuth();
-    }, [navigate, BACKEND_URL]);
+    }, [isPolling, email, navigate, BACKEND_URL]);
 
-    const handleLogin = async (e) => {
+    // Password Login
+    const handlePasswordLogin = async (e) => {
         e.preventDefault();
         setIsLoading(true);
         setError('');
@@ -59,11 +105,10 @@ export default function Login() {
                 localStorage.setItem('refreshToken', data.refreshToken || '');
                 localStorage.setItem('userName', data.user?.username || email.split('@')[0]);
                 localStorage.setItem('userEmail', email);
+                localStorage.setItem('app_version', '2.0.0');
                 
                 setMessage('Login successful! Redirecting...');
-                setTimeout(() => {
-                    navigate('/dashboard');
-                }, 1500);
+                setTimeout(() => navigate('/dashboard'), 1500);
             } else {
                 setError(data.message || data.error || 'Login failed. Please check your credentials.');
             }
@@ -75,6 +120,38 @@ export default function Login() {
         }
     };
 
+    // Magic Link Login (Send email)
+    const handleMagicLinkLogin = async (e) => {
+        e.preventDefault();
+        setIsLoading(true);
+        setError('');
+        setMessage('');
+        
+        try {
+            const res = await fetch(`${BACKEND_URL}/api/auth/send-magic-link`, {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ email })
+            });
+
+            const data = await res.json();
+
+            if (res.ok) {
+                setMessage('✨ Magic link sent! Check your email to login.');
+                setIsPolling(true);
+                setPollingCount(0);
+            } else {
+                setError(data.message || 'Failed to send magic link');
+            }
+        } catch (err) {
+            console.error('Magic link error:', err);
+            setError('Server connection failed. Please try again.');
+        } finally {
+            setIsLoading(false);
+        }
+    };
+
+    // Password Registration
     const handleRegister = async (e) => {
         e.preventDefault();
         setIsLoading(true);
@@ -95,9 +172,8 @@ export default function Login() {
             const data = await res.json();
 
             if (res.ok) {
-                setMessage('Registration successful! Please login.');
+                setMessage('Registration successful! You can now login with password or use magic link.');
                 setIsLogin(true);
-                setEmail('');
                 setPassword('');
             } else {
                 setError(data.message || data.error || 'Registration failed');
@@ -116,7 +192,6 @@ export default function Login() {
                 <div className="auth-card">
                     <div className="loading-spinner">⏳</div>
                     <h2>Loading...</h2>
-                    <p>Please wait while we verify your session.</p>
                 </div>
             </div>
         );
@@ -124,75 +199,81 @@ export default function Login() {
 
     return (
         <div className="auth-container">
-            <div className="floating-particles">
-                {[...Array(20)].map((_, i) => (
-                    <div key={i} className="particle" style={{
-                        left: `${Math.random() * 100}%`,
-                        top: `${Math.random() * 100}%`,
-                        animationDelay: `${Math.random() * 5}s`,
-                        width: `${Math.random() * 6 + 2}px`,
-                        height: `${Math.random() * 6 + 2}px`
-                    }}></div>
-                ))}
-            </div>
-
-            <div className="back-home">
-                <button className="back-home-btn" onClick={() => navigate('/')}>
-                    <svg className="back-arrow" viewBox="0 0 24 24">
-                        <path d="M19 12H5M12 19l-7-7 7-7"/>
-                    </svg>
-                    Back to Home
-                </button>
-            </div>
-
             <div className="auth-card">
                 <h2 className="auth-title">
                     {isLogin ? 'Login to' : 'Register for'} <span>PeerSync</span>
                 </h2>
-                <p className="auth-subtitle">
-                    {isLogin 
-                        ? 'Enter your credentials to access your account'
-                        : 'Create a new account to start collaborating'
-                    }
-                </p>
+
+                {/* Auth Method Toggle (only for login) */}
+                {isLogin && (
+                    <div className="auth-method-toggle">
+                        <button 
+                            className={`method-btn ${authMethod === 'password' ? 'active' : ''}`}
+                            onClick={() => { setAuthMethod('password'); setError(''); setMessage(''); }}
+                        >
+                            🔐 Password Login
+                        </button>
+                        <button 
+                            className={`method-btn ${authMethod === 'magic' ? 'active' : ''}`}
+                            onClick={() => { setAuthMethod('magic'); setError(''); setMessage(''); }}
+                        >
+                            ✨ Magic Link
+                        </button>
+                    </div>
+                )}
 
                 {error && <div className="error-message">{error}</div>}
                 {message && <div className="success-message">{message}</div>}
 
-                <form onSubmit={isLogin ? handleLogin : handleRegister}>
-                    <div className="input-group">
-                        <label>Email Address</label>
-                        <input 
-                            type="email" 
-                            placeholder="you@example.com"
-                            value={email}
-                            onChange={(e) => setEmail(e.target.value)} 
-                            required 
-                            disabled={isLoading}
-                        />
+                {isPolling && (
+                    <div className="polling-status">
+                        <div className="loading-spinner-small">⏳</div>
+                        <p>Waiting for email verification...</p>
+                        <small>Click the link in your email. Auto-detecting...</small>
+                        <div className="polling-progress">
+                            <div className="progress-bar" style={{ width: `${(pollingCount / 30) * 100}%` }}></div>
+                        </div>
                     </div>
+                )}
 
-                    <div className="input-group">
-                        <label>Password</label>
-                        <input 
-                            type="password" 
-                            placeholder="••••••••"
-                            value={password}
-                            onChange={(e) => setPassword(e.target.value)} 
-                            required 
-                            disabled={isLoading}
-                        />
-                    </div>
+                {!isPolling && (
+                    <form onSubmit={isLogin ? (authMethod === 'password' ? handlePasswordLogin : handleMagicLinkLogin) : handleRegister}>
+                        <div className="input-group">
+                            <label>Email Address</label>
+                            <input 
+                                type="email" 
+                                placeholder="you@example.com"
+                                value={email}
+                                onChange={(e) => setEmail(e.target.value)} 
+                                required 
+                                disabled={isLoading}
+                            />
+                        </div>
 
-                    <button type="submit" className="auth-btn" disabled={isLoading}>
-                        {isLoading 
-                            ? 'Processing...' 
-                            : isLogin 
-                                ? 'Login 🔐' 
-                                : 'Register ✨'
-                        }
-                    </button>
-                </form>
+                        {(isLogin && authMethod === 'password') || !isLogin ? (
+                            <div className="input-group">
+                                <label>Password</label>
+                                <input 
+                                    type="password" 
+                                    placeholder="••••••••"
+                                    value={password}
+                                    onChange={(e) => setPassword(e.target.value)} 
+                                    required 
+                                    disabled={isLoading}
+                                />
+                            </div>
+                        ) : null}
+
+                        <button type="submit" className="auth-btn" disabled={isLoading}>
+                            {isLoading 
+                                ? 'Processing...' 
+                                : isLogin 
+                                    ? (authMethod === 'password' ? 'Login 🔐' : 'Send Magic Link ✨')
+                                    : 'Register ✨'
+                            }
+                        </button>
+                    </form>
+                )}
 
                 <p className="auth-footer">
                     {isLogin ? "Don't have an account? " : "Already have an account? "}
@@ -201,6 +282,8 @@ export default function Login() {
                             setIsLogin(!isLogin);
                             setError('');
                             setMessage('');
+                            setAuthMethod('password');
+                            setIsPolling(false);
                         }}
                         className="link-button"
                     >
@@ -211,13 +294,10 @@ export default function Login() {
                 <div className="demo-credentials">
                     <p>Demo Account:</p>
                     <code>Email: demo@peersync.com<br/>Password: demo123</code>
+                    <small style={{ display: 'block', marginTop: '10px' }}>
+                        💡 Use Password Login or Magic Link (if email configured)
+                    </small>
                 </div>
-            </div>
-
-            <div className="floating-shapes">
-                <div className="shape shape-1"></div>
-                <div className="shape shape-2"></div>
-                <div className="shape shape-3"></div>
             </div>
         </div>
     );
