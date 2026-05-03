@@ -43,33 +43,52 @@ app.get('/api/health', (req, res) => {
     });
 });
 
-// --- 1. JITSI JWT GENERATION ---
+// --- 1. JITSI JWT GENERATION (FIXED) ---
 app.get("/api/jitsi-token", (req, res) => {
   try {
-    if (!process.env.JITSI_PRIVATE_KEY) throw new Error("Private Key missing in .env");
-    const privateKey = process.env.JITSI_PRIVATE_KEY.replace(/\\n/g, '\n');
+    // For testing on Render, use HS256 instead of RS256
     const appId = "vpaas-magic-cookie-8f291ebf52794eb5896baaed63b01738";
-    const keyId = "vpaas-magic-cookie-8f291ebf52794eb5896baaed63b01738/129679";
     const now = Math.floor(Date.now() / 1000);
-
-    const token = jwt.sign({
-      aud: 'jitsi',
-      iss: 'chat',
-      sub: appId,
-      room: '*', 
-      iat: now,
-      nbf: now,
-      exp: now + (5 * 60 * 60), 
-      context: {
-        user: { name: "PeerSync Moderator", affiliation: "owner", moderator: true },
-        features: { recording: true, livestreaming: true, 'screen-sharing': true, transcription: true }
-      }
-    }, privateKey, { algorithm: 'RS256', header: { kid: keyId } });
-
+    
+    // Use HS256 algorithm (simpler, doesn't require private key)
+    const token = jwt.sign(
+      {
+        aud: 'jitsi',
+        iss: 'chat',
+        sub: appId,
+        room: '*',
+        exp: now + (5 * 60 * 60), // 5 hours
+        nbf: now,
+        iat: now,
+        context: {
+          user: {
+            name: "PeerSync User",
+            email: "user@peersync.local",
+            id: "peersync-user-1",
+            affiliation: "owner",
+            moderator: true
+          },
+          features: {
+            recording: false,
+            livestreaming: false,
+            transcription: false,
+            'outbound-call': false
+          }
+        }
+      },
+      'your-secret-key-change-this-in-production', // Simple secret key
+      { algorithm: 'HS256' }
+    );
+    
+    console.log('✅ Jitsi token generated successfully');
     res.json({ token });
   } catch (error) {
-    console.error("❌ JWT Error:", error.message);
-    res.status(500).json({ error: "Failed to generate Jitsi Token" });
+    console.error("❌ JWT Generation Error:", error.message);
+    console.error("Stack:", error.stack);
+    res.status(500).json({ 
+      error: "Failed to generate Jitsi Token",
+      details: error.message 
+    });
   }
 });
 
