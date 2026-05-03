@@ -92,69 +92,82 @@ app.get("/api/jitsi-token", (req, res) => {
   }
 });
 
-// --- 2. CODE EXECUTION (DYNAMIC FIX) ---
+// --- 2. CODE EXECUTION (PISTON FIX - Works on Render) ---
 app.post("/api/execute", async (req, res) => {
   const { language, code } = req.body;
-  const PISTON_BASE = "http://piston:2000/api/v2";
-
-  // Map languages to their expected entry-point filenames
-  const fileMapping = {
-    java: "Main.java",
-    python: "script.py",
-    javascript: "index.js",
-    cpp: "main.cpp",
+  
+  // Map languages to Piston-compatible formats
+  const languageMap = {
+    'javascript': { language: 'javascript', version: '18.15.0', filename: 'index.js' },
+    'python': { language: 'python', version: '3.10.0', filename: 'script.py' },
+    'java': { language: 'java', version: '15.0.2', filename: 'Main.java' },
+    'cpp': { language: 'cpp', version: '10.2.0', filename: 'main.cpp' }
   };
-
-  const filename = fileMapping[language.toLowerCase()] || "script";
-
-  try {
-    // 1. Get the list of available runtimes from Piston
-    const runtimesResponse = await axios.get(`${PISTON_BASE}/runtimes`);
-    const selected = runtimesResponse.data.find(r => 
-      r.language === language.toLowerCase() || (r.aliases && r.aliases.includes(language.toLowerCase()))
-    );
-
-    if (!selected) {
-      return res.status(400).json({ error: `Language '${language}' not supported by execution engine.` });
-    }
-
-    // 2. Prepare the execution payload dynamically
-    const payload = {
-      language: selected.language,
-      version: selected.version,
-      files: [{ name: filename, content: code }]
-    };
-
-    // 3. Special handling for Java (Optional: keeps your previous optimization)
-    if (selected.language === 'java') {
-      payload.run_command = "java -XX:TieredStopAtLevel=1 -Xmx256m Main.java";
-    }
-
-    // 4. Send to Piston
-    const response = await axios.post(`${PISTON_BASE}/execute`, payload);
-
-    const run = response.data.run;
-    console.log("PISTON DEBUG:", run); 
-
-    let result = (run.stdout || "") + (run.stderr || "");
-
-    if (!result.trim()) {
-      if (run.signal === "SIGKILL" || run.status === "TO") {
-        result = "❌ Error: Process timed out.";
-      } else if (run.code !== 0 && run.code !== null) {
-        result = `❌ Error: Process exited with code ${run.code}`;
-      } else {
-        result = "✅ Program executed but returned no text.";
-      }
-    }
-
-    res.json({ output: result });
-
-  } catch (error) {
-    const details = error.response?.data?.message || error.message;
-    console.error("Execution Error:", details);
-    res.status(500).json({ error: "Execution Failed", details });
+  
+  const langConfig = languageMap[language.toLowerCase()];
+  if (!langConfig) {
+    return res.status(400).json({ error: `Language '${language}' not supported` });
   }
+  
+  // Multiple Piston endpoints to try (public APIs for testing)
+  const endpoints = [
+    "https://emkc.org/api/v2/piston/execute",  // Public Piston API (no setup needed)
+    "http://piston:2000/api/v2/execute",       // Local Docker
+    "https://piston-server.onrender.com/api/v2/execute"  // Alternative
+  ];
+  
+  for (const endpoint of endpoints) {
+    try {
+      console.log(`🔄 Trying Piston at: ${endpoint}`);
+      
+      const payload = {
+        language: langConfig.language,
+        version: langConfig.version,
+        files: [{ 
+          name: langConfig.filename,
+          content: code 
+        }]
+      };
+      
+      const response = await axios.post(endpoint, payload, { 
+        timeout: 10000,
+        headers: { 'Content-Type': 'application/json' }
+      });
+      
+      const result = response.data.run;
+      let output = '';
+      
+      if (result.stdout) output += result.stdout;
+      if (result.stderr) output += result.stderr;
+      
+      if (!output.trim()) {
+        if (result.code === 0) {
+          output = '✅ Code executed successfully (no output)';
+        } else if (result.signal === 'SIGKILL') {
+          output = '❌ Timeout: Code execution took too long';
+        } else if (result.code !== null && result.code !== 0) {
+          output = `❌ Process exited with code ${result.code}`;
+        } else {
+          output = '✅ Program executed but returned no output';
+        }
+      }
+      
+      console.log(`✅ Execution successful via ${endpoint}`);
+      res.json({ output: output.trim() });
+      return;
+      
+    } catch (error) {
+      console.log(`❌ Failed with ${endpoint}:`, error.message);
+      continue; // Try next endpoint
+    }
+  }
+  
+  // If all endpoints fail
+  res.status(500).json({ 
+    error: "Code execution service unavailable",
+    details: "All Piston endpoints failed. Please try again later or run code locally.",
+    suggestion: "JavaScript execution works best. Try switching to JavaScript."
+  });
 });
 
 // --- 3. AI SUMMARY (GEMINI 2.5 FLASH) ---

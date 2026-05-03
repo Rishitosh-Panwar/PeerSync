@@ -1,199 +1,110 @@
+// Login.jsx - Fixed version that works with App.jsx auth
 import { useState, useEffect } from 'react';
 import { useNavigate, Link } from 'react-router-dom';
 import './Login.css';
 
 export default function Login() {
     const [email, setEmail] = useState('');
+    const [password, setPassword] = useState('');
+    const [isLogin, setIsLogin] = useState(true);
     const [isLoading, setIsLoading] = useState(false);
     const [message, setMessage] = useState('');
     const [error, setError] = useState('');
-    const [needsVerification, setNeedsVerification] = useState(false);
-    const [isPolling, setIsPolling] = useState(false);
-    const [pollingCount, setPollingCount] = useState(0);
     const [isCheckingAuth, setIsCheckingAuth] = useState(true);
     const navigate = useNavigate();
     const BACKEND_URL = "https://peersync-backend.onrender.com";
 
-    // Check URL for verification success parameter
+    // Check if already logged in
     useEffect(() => {
-        const urlParams = new URLSearchParams(window.location.search);
-        const errorParam = urlParams.get('error');
-        const verified = urlParams.get('verified');
-        const verifiedEmail = urlParams.get('email');
-        
-        if (errorParam) {
-            setError(decodeURIComponent(errorParam));
-        }
-        
-        // If coming back from verification, auto-login
-        if (verified === 'true' && verifiedEmail) {
-            console.log('Verification detected! Auto-logging in:', verifiedEmail);
-            setMessage('Email verified! Logging you in...');
-            performAutoLogin(verifiedEmail);
-            // Clean URL without refreshing
-            window.history.replaceState({}, document.title, window.location.pathname);
-            return;
-        }
-        
-        // Validate existing token before redirecting
-        const checkExistingAuth = async () => {
+        const checkAuth = async () => {
             const token = localStorage.getItem('token');
-            
-            if (!token) {
-                setIsCheckingAuth(false);
-                return;
-            }
-            
-            try {
-                const res = await fetch(`${BACKEND_URL}/api/auth/verify-token`, {
-                    method: 'POST',
-                    headers: { 
-                        'Content-Type': 'application/json',
-                    },
-                    body: JSON.stringify({ token })
-                });
-                
-                const data = await res.json();
-                
-                if (data.valid && data.user) {
-                    navigate('/dashboard');
-                } else {
-                    localStorage.clear();
-                    sessionStorage.clear();
-                    setIsCheckingAuth(false);
-                }
-            } catch (err) {
-                localStorage.clear();
-                sessionStorage.clear();
-                setIsCheckingAuth(false);
-            }
-        };
-        
-        checkExistingAuth();
-    }, [navigate, BACKEND_URL]);
-
-    const performAutoLogin = async (userEmail) => {
-        try {
-            const tokenRes = await fetch(`${BACKEND_URL}/api/auth/get-login-token`, {
-                method: 'POST',
-                headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({ email: userEmail })
-            });
-            
-            const tokenData = await tokenRes.json();
-            
-            if (tokenData.token) {
-                localStorage.setItem('token', tokenData.token);
-                localStorage.setItem('refreshToken', tokenData.refreshToken || '');
-                localStorage.setItem('userName', tokenData.username || 'User');
-                localStorage.setItem('userEmail', userEmail);
-                
-                setMessage('Login successful! Redirecting to dashboard...');
-                setTimeout(() => {
-                    navigate('/dashboard');
-                }, 1500);
-            } else {
-                setError('Auto-login failed. Please try again.');
-                setIsPolling(false);
-            }
-        } catch (loginErr) {
-            console.error('Auto-login error:', loginErr);
-            setError('Auto-login failed. Please try clicking "Send Magic Link" again.');
-            setIsPolling(false);
-        }
-    };
-
-    // Polling function as backup
-    useEffect(() => {
-        let pollInterval;
-        let verificationAttempts = 0;
-        const MAX_ATTEMPTS = 30;
-        
-        if (isPolling && email) {
-            pollInterval = setInterval(async () => {
-                verificationAttempts++;
-                setPollingCount(verificationAttempts);
-                
+            if (token) {
                 try {
-                    const res = await fetch(`${BACKEND_URL}/api/auth/check-verification`, {
+                    const res = await fetch(`${BACKEND_URL}/api/auth/verify-token`, {
                         method: 'POST',
                         headers: { 'Content-Type': 'application/json' },
-                        body: JSON.stringify({ email })
+                        body: JSON.stringify({ token })
                     });
-                    
                     const data = await res.json();
-                    
-                    if (data.isVerified) {
-                        clearInterval(pollInterval);
-                        setIsPolling(false);
-                        await performAutoLogin(email);
-                    } else if (verificationAttempts >= MAX_ATTEMPTS) {
-                        clearInterval(pollInterval);
-                        setIsPolling(false);
-                        setError('Verification timeout. Please check your email and click the link again.');
+                    if (data.valid) {
+                        navigate('/dashboard');
+                        return;
                     }
                 } catch (err) {
-                    console.error('Polling error:', err);
+                    console.error('Auth check failed:', err);
                 }
-            }, 3000);
-        }
-        
-        return () => {
-            if (pollInterval) clearInterval(pollInterval);
+            }
+            setIsCheckingAuth(false);
         };
-    }, [isPolling, email, BACKEND_URL]);
+        checkAuth();
+    }, [navigate, BACKEND_URL]);
 
-    const handleSubmit = async (e) => {
+    const handleLogin = async (e) => {
         e.preventDefault();
         setIsLoading(true);
         setError('');
         setMessage('');
-        setNeedsVerification(false);
         
         try {
             const res = await fetch(`${BACKEND_URL}/api/auth/login`, {
                 method: 'POST',
-                headers: { 
-                    'Content-Type': 'application/json',
-                },
-                body: JSON.stringify({ email })
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ email, password })
+            });
+
+            const data = await res.json();
+
+            if (res.ok && data.token) {
+                localStorage.setItem('token', data.token);
+                localStorage.setItem('refreshToken', data.refreshToken || '');
+                localStorage.setItem('userName', data.user?.username || email.split('@')[0]);
+                localStorage.setItem('userEmail', email);
+                
+                setMessage('Login successful! Redirecting...');
+                setTimeout(() => {
+                    navigate('/dashboard');
+                }, 1500);
+            } else {
+                setError(data.message || data.error || 'Login failed. Please check your credentials.');
+            }
+        } catch (err) {
+            console.error('Login error:', err);
+            setError('Server connection failed. Please try again.');
+        } finally {
+            setIsLoading(false);
+        }
+    };
+
+    const handleRegister = async (e) => {
+        e.preventDefault();
+        setIsLoading(true);
+        setError('');
+        setMessage('');
+        
+        try {
+            const res = await fetch(`${BACKEND_URL}/api/auth/register`, {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ 
+                    username: email.split('@')[0],
+                    email, 
+                    password 
+                })
             });
 
             const data = await res.json();
 
             if (res.ok) {
-                setMessage('Magic link sent! Check your email for the login link.');
+                setMessage('Registration successful! Please login.');
+                setIsLogin(true);
                 setEmail('');
-            } else if (res.status === 401 && data.needsVerification) {
-                setMessage('📧 Verification needed. Sending verification link to your email...');
-                
-                try {
-                    const resendRes = await fetch(`${BACKEND_URL}/api/auth/resend-verification`, {
-                        method: 'POST',
-                        headers: { 'Content-Type': 'application/json' },
-                        body: JSON.stringify({ email })
-                    });
-                    
-                    const resendData = await resendRes.json();
-                    
-                    if (resendRes.ok) {
-                        setMessage('✅ Verification link sent! Please check your email and click the link to verify your account.');
-                        setNeedsVerification(true);
-                        setIsPolling(true);
-                        setPollingCount(0);
-                    } else {
-                        setError(resendData.message || 'Failed to send verification link');
-                    }
-                } catch (resendErr) {
-                    console.error('Auto-resend error:', resendErr);
-                    setError('Failed to send verification link. Please try again.');
-                }
+                setPassword('');
             } else {
-                setError(data.message || 'Something went wrong');
+                setError(data.message || data.error || 'Registration failed');
             }
         } catch (err) {
-            console.error('Login error:', err);
-            setError("Server connection failed. Please try again.");
+            console.error('Register error:', err);
+            setError('Server connection failed. Please try again.');
         } finally {
             setIsLoading(false);
         }
@@ -236,27 +147,19 @@ export default function Login() {
 
             <div className="auth-card">
                 <h2 className="auth-title">
-                    Login to <span>PeerSync</span>
+                    {isLogin ? 'Login to' : 'Register for'} <span>PeerSync</span>
                 </h2>
                 <p className="auth-subtitle">
-                    Enter your email to receive a magic login link
+                    {isLogin 
+                        ? 'Enter your credentials to access your account'
+                        : 'Create a new account to start collaborating'
+                    }
                 </p>
 
                 {error && <div className="error-message">{error}</div>}
                 {message && <div className="success-message">{message}</div>}
 
-                {isPolling && (
-                    <div className="polling-status">
-                        <div className="loading-spinner-small">⏳</div>
-                        <p>Waiting for email verification...</p>
-                        <small>Click the link in your email. This page will automatically detect and log you in!</small>
-                        <div className="polling-progress">
-                            <div className="progress-bar" style={{ width: `${(pollingCount / 30) * 100}%` }}></div>
-                        </div>
-                    </div>
-                )}
-
-                <form onSubmit={handleSubmit}>
+                <form onSubmit={isLogin ? handleLogin : handleRegister}>
                     <div className="input-group">
                         <label>Email Address</label>
                         <input 
@@ -265,28 +168,50 @@ export default function Login() {
                             value={email}
                             onChange={(e) => setEmail(e.target.value)} 
                             required 
-                            disabled={isLoading || isPolling}
+                            disabled={isLoading}
                         />
                     </div>
 
-                    <button type="submit" className="auth-btn" disabled={isLoading || isPolling}>
-                        {isLoading ? 'Sending Magic Link...' : isPolling ? 'Waiting for Verification...' : 'Send Magic Link ✨'}
+                    <div className="input-group">
+                        <label>Password</label>
+                        <input 
+                            type="password" 
+                            placeholder="••••••••"
+                            value={password}
+                            onChange={(e) => setPassword(e.target.value)} 
+                            required 
+                            disabled={isLoading}
+                        />
+                    </div>
+
+                    <button type="submit" className="auth-btn" disabled={isLoading}>
+                        {isLoading 
+                            ? 'Processing...' 
+                            : isLogin 
+                                ? 'Login 🔐' 
+                                : 'Register ✨'
+                        }
                     </button>
                 </form>
 
                 <p className="auth-footer">
-                    Don't have an account? <Link to="/register">Register here</Link>
+                    {isLogin ? "Don't have an account? " : "Already have an account? "}
+                    <button 
+                        onClick={() => {
+                            setIsLogin(!isLogin);
+                            setError('');
+                            setMessage('');
+                        }}
+                        className="link-button"
+                    >
+                        {isLogin ? 'Register here' : 'Login here'}
+                    </button>
                 </p>
                 
-                {needsVerification && (
-                    <div className="info-text">
-                        <small>
-                            💡 Verification link sent! Please check your email and click the link.
-                            <br />
-                            <strong>After clicking the link, you will be automatically logged in!</strong>
-                        </small>
-                    </div>
-                )}
+                <div className="demo-credentials">
+                    <p>Demo Account:</p>
+                    <code>Email: demo@peersync.com<br/>Password: demo123</code>
+                </div>
             </div>
 
             <div className="floating-shapes">
