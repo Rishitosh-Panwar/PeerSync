@@ -1,3 +1,33 @@
+// Add at the very top of App.jsx, before any imports
+// CACHE CLEARER VERSION 2.0
+const clearOldCache = () => {
+    const version = '2.0.0';
+    const storedVersion = localStorage.getItem('app_version');
+    
+    if (storedVersion !== version) {
+        console.log('🔄 Clearing old cache... New version:', version);
+        
+        // Clear all localStorage
+        localStorage.clear();
+        
+        // Clear all sessionStorage
+        sessionStorage.clear();
+        
+        // Clear cookies
+        document.cookie.split(";").forEach(function(c) { 
+            document.cookie = c.replace(/^ +/, "").replace(/=.*/, "=;expires=" + new Date().toUTCString() + ";path=/"); 
+        });
+        
+        // Set new version
+        localStorage.setItem('app_version', version);
+        
+        console.log('✅ Cache cleared!');
+    }
+};
+
+// Run cache cleaner
+clearOldCache();
+
 import { useEffect, useRef, useState } from 'react';
 import { io } from 'socket.io-client';
 import Editor from '@monaco-editor/react';
@@ -79,53 +109,64 @@ export default function App() {
     const [connectionStatus, setConnectionStatus] = useState('connecting');
     const [transportType, setTransportType] = useState('unknown');
 
-    // Enhanced auth check with token refresh
-useEffect(() => {
-    const checkAuth = async () => {
-        const token = localStorage.getItem('token');
-        const refreshToken = localStorage.getItem('refreshToken');
-        
-        if (!token) {
-            navigate('/login');
-            return;
-        }
-        
-        // Verify token is still valid
-        try {
-            const res = await api.get('/api/auth/me', {
-                headers: { Authorization: `Bearer ${token}` }
+    // Add this function for hard reset
+    const hardReset = () => {
+        if (confirm('This will clear all data and log you out. Continue?')) {
+            localStorage.clear();
+            sessionStorage.clear();
+            document.cookie.split(";").forEach(function(c) { 
+                document.cookie = c.replace(/^ +/, "").replace(/=.*/, "=;expires=" + new Date().toUTCString() + ";path=/"); 
             });
-            
-            if (res.data) {
-                // Token is valid, update user info
-                localStorage.setItem('userName', res.data.username);
-                console.log('Authenticated as:', res.data.username);
-            }
-        } catch (error) {
-            // Token expired, try to refresh
-            if (refreshToken) {
-                try {
-                    const refreshRes = await api.post('/api/auth/refresh-token', { refreshToken });
-                    if (refreshRes.data.token) {
-                        localStorage.setItem('token', refreshRes.data.token);
-                        console.log('Token refreshed successfully');
-                        return;
-                    }
-                } catch (refreshError) {
-                    console.error('Token refresh failed:', refreshError);
-                }
-            }
-            
-            // No valid token, redirect to login
-            localStorage.removeItem('token');
-            localStorage.removeItem('refreshToken');
-            navigate('/login');
+            window.location.href = '/login';
         }
     };
-    
-    checkAuth();
-}, [navigate]);
 
+    // Enhanced auth check with token refresh
+    useEffect(() => {
+        const checkAuth = async () => {
+            const token = localStorage.getItem('token');
+            const refreshToken = localStorage.getItem('refreshToken');
+            
+            if (!token) {
+                navigate('/login');
+                return;
+            }
+            
+            // Verify token is still valid
+            try {
+                const res = await api.get('/api/auth/me', {
+                    headers: { Authorization: `Bearer ${token}` }
+                });
+                
+                if (res.data) {
+                    // Token is valid, update user info
+                    localStorage.setItem('userName', res.data.username);
+                    console.log('Authenticated as:', res.data.username);
+                }
+            } catch (error) {
+                // Token expired, try to refresh
+                if (refreshToken) {
+                    try {
+                        const refreshRes = await api.post('/api/auth/refresh-token', { refreshToken });
+                        if (refreshRes.data.token) {
+                            localStorage.setItem('token', refreshRes.data.token);
+                            console.log('Token refreshed successfully');
+                            return;
+                        }
+                    } catch (refreshError) {
+                        console.error('Token refresh failed:', refreshError);
+                    }
+                }
+                
+                // No valid token, redirect to login
+                localStorage.removeItem('token');
+                localStorage.removeItem('refreshToken');
+                navigate('/login');
+            }
+        };
+        
+        checkAuth();
+    }, [navigate]);
 
     // Monitor socket connection
     useEffect(() => {
@@ -404,7 +445,7 @@ useEffect(() => {
     };
 
     const handleLayoutToggle = () => {
-    setIsVideoMaximized(!isVideoMaximized);
+        setIsVideoMaximized(!isVideoMaximized);
     };
 
     const requestToDrive = () => {
@@ -541,6 +582,10 @@ useEffect(() => {
                     >
                         <span className="button-icon">🤖</span>
                         <span>{isGenerating ? "Analyzing..." : "AI Summary"}</span>
+                    </button>
+                    
+                    <button onClick={hardReset} className="reset-button" title="Clear all data and reset">
+                        🗑️ Reset
                     </button>
                     
                     {!isDriver ? (

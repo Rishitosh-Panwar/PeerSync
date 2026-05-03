@@ -1164,3 +1164,19 @@ body {
   transform: translateY(-3px);
   box-shadow: 0 10px 30px rgba(223, 182, 178, 0.3);
 }
+
+.reset-button {
+    background: #ff6b6b;
+    color: white;
+    border: none;
+    padding: 8px 12px;
+    border-radius: 8px;
+    cursor: pointer;
+    margin-left: 10px;
+    font-size: 14px;
+    transition: background 0.2s;
+}
+
+.reset-button:hover {
+    background: #ff4757;
+}
