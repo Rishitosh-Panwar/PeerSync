@@ -179,13 +179,13 @@ app.get("/api/jitsi-token", (req, res) => {
   }
 });
 
-// --- 2. CODE EXECUTION (Multi-API Fallback System) ---
+// --- 2. CODE EXECUTION (Working Piston API Integration) ---
 app.post("/api/execute", async (req, res) => {
   const { language, code } = req.body;
   
   console.log(`📝 Executing ${language} code...`);
   
-  // For JavaScript - Execute locally (works 100%)
+  // JavaScript - Local execution (always works)
   if (language === 'javascript') {
     try {
       let output = '';
@@ -203,7 +203,7 @@ app.post("/api/execute", async (req, res) => {
         await func();
         output = logs.join('\n');
         if (!output.trim()) {
-          output = '✅ JavaScript code executed successfully (no console output)';
+          output = '✅ JavaScript code executed successfully';
         }
       } catch (error) {
         output = `❌ JavaScript Error: ${error.message}`;
@@ -214,196 +214,74 @@ app.post("/api/execute", async (req, res) => {
       res.json({ output });
       return;
     } catch (error) {
-      console.error('JS execution error:', error);
       res.status(500).json({ error: error.message });
       return;
     }
   }
   
-  // For Python
-  if (language === 'python') {
-    // Try multiple Python execution APIs
-    const apis = [
-      {
-        name: 'Piston API',
-        url: 'https://emkc.org/api/v2/piston/execute',
-        body: (code) => ({
-          language: 'python',
-          version: '3.10.0',
-          files: [{ content: code }],
-          stdin: ""
-        })
-      },
-      {
-        name: 'JDoodle API (Public)',
-        url: 'https://api.jdoodle.com/v1/execute',
-        body: (code) => ({
-          script: code,
-          language: 'python3',
-          versionIndex: '3',
-          clientId: 'd5f8b5e5d7e5f8b5e5d7e5f', // Public test ID
-          clientSecret: '8b5e5d7e5f8b5e5d7e5f8b5e5d7e5f8b5e5d7e5'
-        })
-      },
-      {
-        name: 'CodeX API',
-        url: 'https://api.codex.jaagrav.in/execute',
-        body: (code) => ({
-          code: code,
-          language: 'python',
-          input: ''
-        })
-      }
-    ];
-    
-    for (const api of apis) {
-      try {
-        console.log(`Trying ${api.name} for Python...`);
-        const response = await axios.post(api.url, api.body(code), {
-          timeout: 8000,
-          headers: { 'Content-Type': 'application/json' }
-        });
-        
-        let output = '';
-        if (api.name === 'Piston API') {
-          output = response.data.run.output || response.data.run.stderr;
-        } else if (api.name === 'JDoodle API (Public)') {
-          output = response.data.output;
-        } else if (api.name === 'CodeX API') {
-          output = response.data.output;
-        }
-        
-        if (output && output.trim()) {
-          console.log(`✅ Python executed via ${api.name}`);
-          res.json({ output: output.trim() });
-          return;
-        }
-      } catch (err) {
-        console.log(`${api.name} failed, trying next...`);
-      }
-    }
-    
-    // Fallback: Use a Python code runner via Remote Interpreter
-    try {
-      // Try Replit's public API
-      const replitRes = await axios.post('https://replit.com/data/repls/run', {
-        language: 'python3',
-        code: code
-      }, { timeout: 8000 });
-      
-      if (replitRes.data && replitRes.data.output) {
-        res.json({ output: replitRes.data.output });
-        return;
-      }
-    } catch (err) {}
-    
-    // Final fallback - Show instructions
-    res.json({ 
-      output: `⚠️ Python execution is currently unavailable via external APIs.
-
-💡 Your code was:
-${code}
-
-💡 Quick workaround: Use JavaScript for instant execution!
-
-💡 To run Python locally:
-1. Install Python: https://python.org
-2. Save as script.py
-3. Run: python script.py
-
-💡 Online Python runners:
-• https://replit.com (works!)
-• https://onlinegdb.com/python
-• https://pythonexecutor.com`
-    });
+  // Python, Java, C++ via Piston API
+  const languages = {
+    python: { language: "python", version: "3.10.0" },
+    java: { language: "java", version: "15.0.2" },
+    cpp: { language: "cpp", version: "10.2.0" }
+  };
+  
+  const lang = languages[language];
+  
+  if (!lang) {
+    res.json({ output: `⚠️ ${language} not supported. Use JavaScript, Python, Java, or C++` });
     return;
   }
   
-  // For Java
-  if (language === 'java') {
-    try {
-      // Try Piston API for Java
-      const response = await axios.post('https://emkc.org/api/v2/piston/execute', {
-        language: 'java',
-        version: '15.0.2',
-        files: [{ content: code }],
-        stdin: ""
-      }, { timeout: 8000 });
-      
-      let output = response.data.run.output || response.data.run.stderr;
-      if (output && output.trim()) {
-        console.log('✅ Java executed via Piston API');
-        res.json({ output: output.trim() });
-        return;
-      }
-    } catch (err) {
-      console.log('Piston API for Java failed:', err.message);
+  try {
+    console.log(`🚀 Executing ${language} via Piston API...`);
+    
+    const response = await axios.post('https://emkc.org/api/v2/piston/execute', {
+      language: lang.language,
+      version: lang.version,
+      files: [{ content: code }],
+      stdin: "",
+      args: [],
+      compile_timeout: 10000,
+      run_timeout: 5000
+    }, {
+      timeout: 15000,
+      headers: { 'Content-Type': 'application/json' }
+    });
+    
+    let output = '';
+    
+    if (response.data.compile && response.data.compile.stderr) {
+      output = `❌ Compilation Error:\n${response.data.compile.stderr}`;
+    } else if (response.data.run && response.data.run.stderr) {
+      output = `❌ Runtime Error:\n${response.data.run.stderr}`;
+    } else if (response.data.run && response.data.run.output) {
+      output = response.data.run.output;
+    } else {
+      output = '✅ Code executed successfully (no output)';
     }
     
-    // Fallback
-    res.json({ 
-      output: `⚠️ Java execution is currently unavailable.
+    console.log(`✅ ${language} executed successfully`);
+    res.json({ output: output.trim() });
+    
+  } catch (error) {
+    console.error(`Piston API error:`, error.message);
+    
+    // Provide helpful fallback message
+    res.json({
+      output: `⚠️ ${language.toUpperCase()} execution failed: ${error.message}
 
 💡 Your code:
 ${code}
 
-💡 Quick workaround: Use JavaScript for instant execution!
+💡 Try these alternatives:
+1. Use JavaScript in PeerSync (works 100%)
+2. Run locally on your computer
+3. Use online runner: https://replit.com
 
-💡 To run Java locally:
-1. Install JDK: https://adoptium.net
-2. Save as Main.java
-3. Run: javac Main.java && java Main
-
-💡 Online Java runners:
-• https://replit.com
-• https://onlinegdb.com/java`
+The Piston API may be temporarily down. Please try again in a few minutes.`
     });
-    return;
   }
-  
-  // For C++
-  if (language === 'cpp') {
-    try {
-      // Try Piston API for C++
-      const response = await axios.post('https://emkc.org/api/v2/piston/execute', {
-        language: 'cpp',
-        version: '10.2.0',
-        files: [{ content: code }],
-        stdin: ""
-      }, { timeout: 8000 });
-      
-      let output = response.data.run.output || response.data.run.stderr;
-      if (output && output.trim()) {
-        console.log('✅ C++ executed via Piston API');
-        res.json({ output: output.trim() });
-        return;
-      }
-    } catch (err) {
-      console.log('Piston API for C++ failed:', err.message);
-    }
-    
-    // Fallback
-    res.json({ 
-      output: `⚠️ C++ execution is currently unavailable.
-
-💡 Your code:
-${code}
-
-💡 Quick workaround: Use JavaScript for instant execution!
-
-💡 To run C++ locally:
-1. Install GCC: https://gcc.gnu.org
-2. Save as main.cpp
-3. Run: g++ main.cpp -o main && ./main
-
-💡 Online C++ runners:
-• https://replit.com
-• https://onlinegdb.com/cpp`
-    });
-    return;
-  }
-  
-  res.json({ output: `⚠️ ${language} is not supported. Try JavaScript, Python, Java, or C++` });
 });
 
 // --- 3. AI SUMMARY (GEMINI 2.5 FLASH) ---
