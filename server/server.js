@@ -53,8 +53,7 @@ app.use(cors({
   optionsSuccessStatus: 204
 }));
 
-// Handle preflight requests explicitly
-app.options('/*', cors());
+// NO app.options() line here - it causes errors and is not needed
 
 // --- MongoDB Connection ---
 mongoose.connect(process.env.MONGO_URI)
@@ -98,7 +97,7 @@ app.get("/api/jitsi-token", (req, res) => {
       iss: "chat",
       sub: appId,
       room: roomName,
-      exp: now + (5.5 * 60 * 60), // 5.5 hours (safe margin for 5-hour calls)
+      exp: now + (5.5 * 60 * 60),
       nbf: now,
       iat: now,
       context: {
@@ -120,10 +119,9 @@ app.get("/api/jitsi-token", (req, res) => {
       }
     };
     
-    // Sign with RS256 and include kid in header
     const token = jwt.sign(payload, privateKey, {
       algorithm: 'RS256',
-      keyid: kid,  // THIS FIXES THE "Missing Key ID (kid)" ERROR
+      keyid: kid,
       header: {
         alg: 'RS256',
         typ: 'JWT',
@@ -152,6 +150,7 @@ app.get("/api/jitsi-token", (req, res) => {
     });
   }
 });
+
 
 // --- 2. CODE EXECUTION (FIXED - Works without Piston) ---
 app.post("/api/execute", async (req, res) => {
