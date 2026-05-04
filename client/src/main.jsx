@@ -12,6 +12,11 @@ import ContactUs from './pages/ContactUs.jsx';
 import './App.css';
 import AuthSuccess from './pages/AuthSuccess';
 import AuthCallback from './pages/AuthCallback'; 
+import ForgotPassword from './ForgotPassword';
+import ResetPassword from './ResetPassword';
+
+// In your Routes component
+
 
 ReactDOM.createRoot(document.getElementById('root')).render(
   <React.StrictMode>
@@ -30,6 +35,8 @@ ReactDOM.createRoot(document.getElementById('root')).render(
         <Route path="/room/:roomId" element={<App />} />
         <Route path="*" element={<Navigate to="/" />} />
         <Route path="/auth/success" element={<AuthSuccess />} />
+        <Route path="/forgot-password" element={<ForgotPassword />} />
+        <Route path="/reset-password" element={<ResetPassword />} />
       </Routes>
     </BrowserRouter>
   </React.StrictMode>

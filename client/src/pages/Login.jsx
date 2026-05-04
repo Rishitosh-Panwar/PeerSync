@@ -1,6 +1,6 @@
-// Login.jsx - Fixed version with correct endpoint mapping
+// Login.jsx - Fixed version with correct endpoint mapping and Forgot Password
 import { useState, useEffect } from 'react';
-import { useNavigate } from 'react-router-dom';
+import { useNavigate, Link } from 'react-router-dom';
 import './Login.css';
 
 export default function Login() {
@@ -302,17 +302,26 @@ export default function Login() {
 
                         {/* Show password field for Password Login AND Registration */}
                         {((isLogin && authMethod === 'password') || !isLogin) && (
-                            <div className="input-group">
-                                <label>Password</label>
-                                <input 
-                                    type="password" 
-                                    placeholder="••••••••"
-                                    value={password}
-                                    onChange={(e) => setPassword(e.target.value)} 
-                                    required 
-                                    disabled={isLoading}
-                                />
-                            </div>
+                            <>
+                                <div className="input-group">
+                                    <label>Password</label>
+                                    <input 
+                                        type="password" 
+                                        placeholder="••••••••"
+                                        value={password}
+                                        onChange={(e) => setPassword(e.target.value)} 
+                                        required 
+                                        disabled={isLoading}
+                                    />
+                                </div>
+                                
+                                {/* Add Forgot Password link - Only for password login */}
+                                {isLogin && authMethod === 'password' && (
+                                    <div className="forgot-password-link">
+                                        <Link to="/forgot-password">Forgot Password?</Link>
+                                    </div>
+                                )}
+                            </>
                         )}
 
                         <button type="submit" className="auth-btn" disabled={isLoading}>
@@ -348,7 +357,8 @@ export default function Login() {
                     <code>Email: demo@peersync.com<br/>Password: demo123</code>
                     <small style={{ display: 'block', marginTop: '10px' }}>
                         💡 <strong>Password Login:</strong> Use email + password<br/>
-                        💡 <strong>Magic Link:</strong> Receive email with login link
+                        💡 <strong>Magic Link:</strong> Receive email with login link<br/>
+                        💡 <strong>Forgot Password:</strong> Click "Forgot Password?" to reset
                     </small>
                 </div>
             </div>
