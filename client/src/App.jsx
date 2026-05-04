@@ -172,6 +172,7 @@ export default function App() {
     const [jitsiError, setJitsiError] = useState(false);
     const [tokenExpiry, setTokenExpiry] = useState(null);
     const [tokenDebug, setTokenDebug] = useState(null);
+    const [jitsiRetryCount, setJitsiRetryCount] = useState(0);
 
     const [showAIOverlay, setShowAIOverlay] = useState(false);
     const [aiData, setAiData] = useState(null);
@@ -457,19 +458,23 @@ export default function App() {
         };
     }, [speechLang, isListening, roomId]);
 
-    // Jitsi initialization with RS256 token
+    // Jitsi initialization with RS256 token and correct room format
     const initJitsi = () => {
         if (window.JitsiMeetExternalAPI && jitsiContainerRef.current && jitsiToken) {
             try {
                 setJitsiActive(true);
                 const domain = "8x8.vc";
-                const roomName = roomId;
                 
-                console.log('🎥 Initializing Jitsi with room:', roomName);
+                // CRITICAL FIX: Use the correct room name format with app ID
+                const appId = "vpaas-magic-cookie-8f291ebf52794eb5896baaed63b01738";
+                const formattedRoomName = `${appId}/${roomId}`;  // This is the correct format!
+                
+                console.log('🎥 Initializing Jitsi with room:', formattedRoomName);
                 console.log('🔑 Token algorithm verification passed');
+                console.log('📝 Original roomId:', roomId);
                 
                 const options = {
-                    roomName: roomName,
+                    roomName: formattedRoomName,  // Use formatted room name
                     jwt: jitsiToken,
                     width: "100%", 
                     height: "100%",
@@ -480,16 +485,21 @@ export default function App() {
                         startWithVideoMuted: false,
                         disableDeepLinking: true,
                         enableWelcomePage: false,
-                        channelLastN: 4,
+                        channelLastN: -1,  // Allow all participants
                         disabledSounds: [],
                         defaultLanguage: 'en',
-                        disableInviteFunctions: true,
+                        disableInviteFunctions: false,
                         disableProfile: false,
                         enableCalendarIntegration: false,
                         enableEmailIntegration: false,
                         enableGoogleAPIs: false,
-                        p2p: { enabled: false },
+                        p2p: { enabled: true },  // Enable P2P for better connection
                         resolution: 720,
+                        hosts: {
+                            domain: '8x8.vc',
+                            muc: 'conference.8x8.vc',
+                            focus: 'focus.8x8.vc'
+                        },
                         constraints: {
                             video: {
                                 height: { ideal: 720, max: 720, min: 180 }
@@ -497,14 +507,14 @@ export default function App() {
                         }
                     },
                     interfaceConfigOverwrite: { 
-                        TILE_VIEW_MAX_COLUMNS: 2,
+                        TILE_VIEW_MAX_COLUMNS: 4,
                         SHOW_JITSI_WATERMARK: false,
                         SHOW_BRAND_WATERMARK: false,
                         TOOLBAR_BUTTONS: [
                             'microphone', 'camera', 'closedcaptions', 'desktop', 
                             'fullscreen', 'fodeviceselection', 'hangup', 
                             'profile', 'chat', 'settings', 'raisehand',
-                            'videoquality', 'tileview'
+                            'videoquality', 'tileview', 'shareroom'
                         ],
                         SETTINGS_SECTIONS: ['devices', 'language', 'moderator', 'profile']
                     }
@@ -513,9 +523,10 @@ export default function App() {
                 jitsiApiRef.current = new window.JitsiMeetExternalAPI(domain, options);
                 
                 jitsiApiRef.current.addListener('videoConferenceJoined', () => {
-                    console.log('✅ Jitsi conference joined successfully');
-                    addNotification('success', 'Video call connected');
+                    console.log('✅ Jitsi conference joined successfully!');
+                    addNotification('success', 'Video call connected!');
                     setJitsiError(false);
+                    setJitsiRetryCount(0);
                 });
                 
                 jitsiApiRef.current.addListener('videoConferenceLeft', () => {
@@ -530,7 +541,20 @@ export default function App() {
                 jitsiApiRef.current.addListener('connectionFailed', (error) => {
                     console.error('Jitsi connection failed:', error);
                     setJitsiError(true);
-                    addNotification('error', 'Video connection failed');
+                    addNotification('error', `Video connection failed (Attempt ${jitsiRetryCount + 1}/3)`);
+                    
+                    // Auto retry up to 3 times
+                    if (jitsiRetryCount < 3) {
+                        setTimeout(() => {
+                            console.log(`🔄 Retrying Jitsi connection (${jitsiRetryCount + 1}/3)...`);
+                            setJitsiRetryCount(prev => prev + 1);
+                            if (jitsiApiRef.current) {
+                                jitsiApiRef.current.dispose();
+                                jitsiApiRef.current = null;
+                            }
+                            setTimeout(() => initJitsi(), 1000);
+                        }, 3000);
+                    }
                 });
                 
                 jitsiApiRef.current.addListener('readyToClose', () => {
@@ -1071,12 +1095,16 @@ export default function App() {
                     )}
                     {jitsiError && (
                         <div className="jitsi-error">
-                            <p>❌ Video call unavailable</p>
+                            <p>❌ Video call connection failed</p>
+                            <p style={{fontSize: '12px', color: '#ccc'}}>Retry attempt: {jitsiRetryCount}/3</p>
                             <button onClick={() => {
                                 setJitsiError(false);
                                 setJitsiToken("");
-                                getJitsiToken();
-                            }}>Retry Connection</button>
+                                setJitsiRetryCount(prev => prev + 1);
+                                setTimeout(() => getJitsiToken(), 1000);
+                            }}>
+                                Retry Connection
+                            </button>
                         </div>
                     )}
                 </div>

@@ -187,26 +187,24 @@ app.get("/api/jitsi-token", (req, res) => {
   }
 });
 
-// --- 2. CODE EXECUTION (FIXED - Works without Piston) ---
+// --- 2. CODE EXECUTION (Using Piston API - Free) ---
 app.post("/api/execute", async (req, res) => {
   const { language, code } = req.body;
   
   console.log(`📝 Executing ${language} code...`);
   
-  // For JavaScript - Execute locally (works immediately)
+  // For JavaScript - Execute locally (fastest)
   if (language === 'javascript') {
     try {
       let output = '';
       let logs = [];
       
-      // Capture console.log
       const originalLog = console.log;
       console.log = (...args) => {
         logs.push(args.join(' '));
         originalLog(...args);
       };
       
-      // Execute code safely
       try {
         const AsyncFunction = Object.getPrototypeOf(async function(){}).constructor;
         const func = new AsyncFunction(code);
@@ -230,43 +228,67 @@ app.post("/api/execute", async (req, res) => {
     }
   }
   
-  // For Python, Java, C++ - Provide helpful message + local execution option
-  let output = '';
+  // For other languages - Use Piston API (Free)
+  const languageMap = {
+    python: { language: 'python', version: '3.10.0' },
+    java: { language: 'java', version: '15.0.2' },
+    cpp: { language: 'cpp', version: '10.2.0' }
+  };
   
-  if (language === 'python') {
-    // Try to execute Python if python3 is installed on server
-    try {
-      const { exec } = require('child_process');
-      const fs = require('fs');
-      const tempFile = '/tmp/script_' + Date.now() + '.py';
-      
-      fs.writeFileSync(tempFile, code);
-      
-      const result = await new Promise((resolve) => {
-        exec(`python3 ${tempFile}`, { timeout: 5000 }, (error, stdout, stderr) => {
-          fs.unlinkSync(tempFile);
-          resolve({ stdout, stderr, error });
-        });
-      });
-      
-      output = result.stdout || result.stderr;
-      if (!output.trim()) output = '✅ Python code executed successfully';
-      
-    } catch (err) {
-      output = `⚠️ Python execution requires Python installed on server.\n\nYour code:\n${code}\n\n💡 For now, use JavaScript for instant execution.`;
+  const langConfig = languageMap[language];
+  
+  if (!langConfig) {
+    res.json({ output: `⚠️ ${language} is not supported yet. Try JavaScript, Python, Java, or C++` });
+    return;
+  }
+  
+  try {
+    console.log(`🚀 Sending ${language} code to Piston API...`);
+    
+    const response = await axios.post('https://emkc.org/api/v2/piston/execute', {
+      language: langConfig.language,
+      version: langConfig.version,
+      files: [{ content: code }],
+      stdin: ""
+    }, {
+      timeout: 10000,
+      headers: { 'Content-Type': 'application/json' }
+    });
+    
+    let output = response.data.run.output || response.data.run.stderr || '✅ Code executed successfully (no output)';
+    
+    // Clean up output
+    if (output.length > 5000) {
+      output = output.substring(0, 5000) + '\n... (output truncated)';
     }
-  } 
-  else if (language === 'java') {
-    output = `⚠️ Java execution note:\n\nYour code:\n${code}\n\n💡 To run Java:\n1. Save as Main.java\n2. Run: javac Main.java && java Main\n\n💡 Or use JavaScript for instant execution in the browser.`;
+    
+    if (response.data.run.stderr && !response.data.run.output) {
+      output = `❌ Error:\n${response.data.run.stderr}`;
+    }
+    
+    console.log(`✅ ${language} code executed via Piston`);
+    res.json({ output });
+    
+  } catch (error) {
+    console.error(`Piston API error for ${language}:`, error.message);
+    
+    // Fallback to helpful message
+    let fallbackMessage = `⚠️ ${language.toUpperCase()} execution temporarily unavailable.\n\n`;
+    fallbackMessage += `💡 Your code:\n${code}\n\n`;
+    fallbackMessage += `💡 To run ${language.toUpperCase()} locally:\n`;
+    
+    if (language === 'python') {
+      fallbackMessage += `1. Install Python: https://python.org\n2. Save as script.py\n3. Run: python script.py\n\n💡 Online Python runner: https://replit.com`;
+    } else if (language === 'java') {
+      fallbackMessage += `1. Install JDK: https://adoptium.net\n2. Save as Main.java\n3. Run: javac Main.java && java Main\n\n💡 Online Java runner: https://replit.com`;
+    } else if (language === 'cpp') {
+      fallbackMessage += `1. Install GCC: https://gcc.gnu.org\n2. Save as main.cpp\n3. Run: g++ main.cpp -o main && ./main\n\n💡 Online C++ runner: https://replit.com`;
+    }
+    
+    fallbackMessage += `\n💡 Or use JavaScript for instant execution in the browser!`;
+    
+    res.json({ output: fallbackMessage });
   }
-  else if (language === 'cpp') {
-    output = `⚠️ C++ execution note:\n\nYour code:\n${code}\n\n💡 To run C++:\n1. Save as main.cpp\n2. Compile: g++ main.cpp -o main\n3. Run: ./main\n\n💡 Or use JavaScript for instant execution in the browser.`;
-  }
-  else {
-    output = `⚠️ ${language} execution requires local setup.\n\n💡 JavaScript execution works immediately!`;
-  }
-  
-  res.json({ output });
 });
 
 // --- 3. AI SUMMARY (GEMINI 2.5 FLASH) ---
