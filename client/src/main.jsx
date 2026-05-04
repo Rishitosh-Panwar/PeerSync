@@ -12,8 +12,9 @@ import ContactUs from './pages/ContactUs.jsx';
 import './App.css';
 import AuthSuccess from './pages/AuthSuccess';
 import AuthCallback from './pages/AuthCallback'; 
-import ForgotPassword from './ForgotPassword';
-import ResetPassword from './ResetPassword';
+import ForgotPassword from './components/ForgotPassword';
+import ResetPassword from './components/ResetPassword';
+
 
 // In your Routes component
 
