@@ -369,24 +369,49 @@ const starterCode = {
 };
 
 io.on("connection", (socket) => {
-  socket.on("join_room", ({ roomId, userName }) => {
-    socket.join(roomId);
-    
-    if (!activeRooms[roomId]) {
-      activeRooms[roomId] = { 
-        code: starterCode.javascript,
-        driver: socket.id, 
-        driverName: userName || "Anonymous" 
-      };
+  const supabase = require('./supabaseClient');
+
+socket.on("join_room", async ({ roomId, userName }) => {
+  socket.join(roomId);
+
+  console.log("👤 Join:", roomId);
+
+  let savedCode = null;
+
+  // 🧠 Fetch from Supabase
+  try {
+    const { data } = await supabase
+      .from('rooms')
+      .select('*')
+      .eq('id', roomId)
+      .single();
+
+    if (data) {
+      savedCode = data.code;
+      console.log("📂 Loaded code from Supabase");
     }
-    
-    socket.emit("initial_code", activeRooms[roomId].code);
-    
-    io.to(roomId).emit("driver_changed", {
-      driverId: activeRooms[roomId].driver,
-      driverName: activeRooms[roomId].driverName
-    });
+  } catch (err) {
+    console.log("⚠️ No saved code yet");
+  }
+
+  // 🧠 Create room if not exists
+  if (!activeRooms[roomId]) {
+    activeRooms[roomId] = { 
+      code: savedCode || starterCode.javascript,
+      driver: socket.id, 
+      driverName: userName || "Anonymous" 
+    };
+  }
+
+  // Send code
+  socket.emit("initial_code", activeRooms[roomId].code);
+
+  // Send driver info (keep your existing behavior)
+  io.to(roomId).emit("driver_changed", {
+    driverId: activeRooms[roomId].driver,
+    driverName: activeRooms[roomId].driverName
   });
+});
 
   socket.on("request_driver_info", ({ roomId }) => {
     if (activeRooms[roomId]) {
@@ -427,12 +452,34 @@ io.on("connection", (socket) => {
     }
   });
 
-  socket.on("code_update", ({ roomId, code }) => {
-    if (activeRooms[roomId]?.driver === socket.id) {
-      activeRooms[roomId].code = code;
-      socket.to(roomId).emit("code_update", code);
+socket.on("code_update", async ({ roomId, code }) => {
+  console.log("📥 code_update received:", roomId);
+
+  if (activeRooms[roomId]?.driver === socket.id) {
+    console.log("✅ Driver matched");
+
+    activeRooms[roomId].code = code;
+    socket.to(roomId).emit("code_update", code);
+
+    try {
+      await supabase
+        .from('rooms')
+        .upsert({
+          id: roomId,
+          code: code,
+          updated_at: new Date()
+        });
+
+      console.log("💾 Saved to Supabase:", roomId);
+
+    } catch (err) {
+      console.error("❌ Supabase error:", err.message);
     }
-  });
+
+  } else {
+    console.log("❌ Not driver");
+  }
+});
 
   socket.on("share_output", ({ roomId, output }) => {
     socket.to(roomId).emit("receive_output", output);

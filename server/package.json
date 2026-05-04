@@ -3,7 +3,6 @@
   "version": "1.0.0",
   "description": "",
   "main": "index.js",
-  
   "scripts": {
     "start": "node server.js",
     "dev": "nodemon server.js"
@@ -16,11 +15,12 @@
     "@google/genai": "^1.43.0",
     "@google/generative-ai": "^0.24.1",
     "@huggingface/inference": "^4.13.14",
+    "@supabase/supabase-js": "^2.105.3",
     "axios": "^1.13.6",
     "bcryptjs": "^3.0.3",
     "cors": "^2.8.6",
     "crypto": "^1.0.1",
-    "dotenv": "^17.3.1",
+    "dotenv": "^17.4.2",
     "express": "^5.2.1",
     "jsonwebtoken": "^9.0.3",
     "mongodb": "^7.1.0",

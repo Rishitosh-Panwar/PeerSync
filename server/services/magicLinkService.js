@@ -209,3 +209,6 @@ module.exports = {
     verifyMagicToken,
     sendMagicLinkEmail
 };
+
+console.log("Sending email from:", process.env.EMAIL_FROM);
+console.log("RESEND KEY:", process.env.RESEND_API_KEY);
