@@ -72,6 +72,24 @@ app.get('/api/health', (req, res) => {
   });
 });
 
+// Debug endpoint to check environment variables
+app.get('/api/debug-env', (req, res) => {
+  const rawKey = process.env.JITSI_PRIVATE_KEY;
+  const fixedKey = rawKey?.replace(/\\n/g, '\n');
+  
+  res.json({
+    hasAppId: !!process.env.JITSI_APP_ID,
+    hasKid: !!process.env.JITSI_KID,
+    hasPrivateKey: !!rawKey,
+    rawKeyLength: rawKey?.length,
+    rawKeyStart: rawKey?.substring(0, 50),
+    hasBackslashN: rawKey?.includes('\\n'),
+    fixedKeyStart: fixedKey?.substring(0, 50),
+    hasPEMStart: fixedKey?.includes('-----BEGIN PRIVATE KEY-----'),
+    hasPEMEnd: fixedKey?.includes('-----END PRIVATE KEY-----')
+  });
+});
+
 // --- 1. JITSI JWT GENERATION (FIXED FOR 8x8.vc WITH RSA) ---
 app.get("/api/jitsi-token", (req, res) => {
   try {
@@ -79,10 +97,32 @@ app.get("/api/jitsi-token", (req, res) => {
     const kid = process.env.JITSI_KID;
     let privateKey = process.env.JITSI_PRIVATE_KEY;
     
-    // Clean up private key format if needed
-    if (privateKey && !privateKey.includes('\\n')) {
-      privateKey = privateKey.replace(/\\n/g, '\n');
+    console.log('🔐 Starting JWT generation...');
+    console.log('App ID exists:', !!appId);
+    console.log('KID exists:', !!kid);
+    console.log('Private Key exists:', !!privateKey);
+    
+    if (!privateKey) {
+      console.error('❌ Private key missing from environment');
+      return res.status(500).json({ error: 'Private key not configured' });
     }
+    
+    // CRITICAL FIX: Convert escaped newlines to actual newlines
+    privateKey = privateKey.replace(/\\n/g, '\n');
+    
+    // Verify the key has proper PEM format
+    if (!privateKey.includes('-----BEGIN PRIVATE KEY-----')) {
+      console.error('❌ Invalid key format - missing BEGIN marker');
+      return res.status(500).json({ error: 'Invalid private key format - missing BEGIN marker' });
+    }
+    
+    if (!privateKey.includes('-----END PRIVATE KEY-----')) {
+      console.error('❌ Invalid key format - missing END marker');
+      return res.status(500).json({ error: 'Invalid private key format - missing END marker' });
+    }
+    
+    console.log('✅ Private key format validated');
+    console.log('Key starts with:', privateKey.substring(0, 30));
     
     const now = Math.floor(Date.now() / 1000);
     const roomName = req.query.room || "peersyncroom-q1dqbgf";
@@ -119,14 +159,10 @@ app.get("/api/jitsi-token", (req, res) => {
       }
     };
     
+    // Sign with RS256 - use privateKey directly (jwt will parse it)
     const token = jwt.sign(payload, privateKey, {
       algorithm: 'RS256',
-      keyid: kid,
-      header: {
-        alg: 'RS256',
-        typ: 'JWT',
-        kid: kid
-      }
+      keyid: kid
     });
     
     console.log('✅ Jitsi token generated successfully');
@@ -150,7 +186,6 @@ app.get("/api/jitsi-token", (req, res) => {
     });
   }
 });
-
 
 // --- 2. CODE EXECUTION (FIXED - Works without Piston) ---
 app.post("/api/execute", async (req, res) => {
