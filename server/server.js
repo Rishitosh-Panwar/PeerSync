@@ -210,7 +210,7 @@ app.get("/api/jitsi-token", (req, res) => {
   }
 });
 
-// --- 2. CODE EXECUTION (Multi-API Fallback with Proper JavaScript Conversion) ---
+// --- 2. CODE EXECUTION (Using Free Community Judge0 - No API Key) ---
 app.post("/api/execute", async (req, res) => {
   const { language, code } = req.body;
   
@@ -251,150 +251,99 @@ app.post("/api/execute", async (req, res) => {
     }
   }
   
-  // Language configurations
-  const langConfigs = {
-    python: { pistonLang: 'python', pistonVer: '3.10.0', codexLang: 'python' },
-    java: { pistonLang: 'java', pistonVer: '15.0.2', codexLang: 'java' },
-    cpp: { pistonLang: 'cpp', pistonVer: '10.2.0', codexLang: 'cpp' }
+  // Language IDs for free Judge0 CE endpoint
+  const languageMap = {
+    python: { id: 71, name: 'python' },
+    java: { id: 62, name: 'java' },
+    cpp: { id: 54, name: 'cpp' }
   };
   
-  const config = langConfigs[language];
+  const lang = languageMap[language];
   
-  if (!config) {
+  if (!lang) {
     res.json({ output: `⚠️ ${language} is not supported. Use JavaScript, Python, Java, or C++` });
     return;
   }
   
-  // Try multiple free APIs (no API key needed)
-  const apis = [
-    {
-      name: 'Piston API',
-      execute: async () => {
-        const response = await axios.post('https://emkc.org/api/v2/piston/execute', {
-          language: config.pistonLang,
-          version: config.pistonVer,
-          files: [{ content: code }],
-          stdin: "",
-          args: [],
-          compile_timeout: 10000,
-          run_timeout: 5000
-        }, { timeout: 10000 });
-        
-        if (response.data.run?.stderr) return `❌ Error: ${response.data.run.stderr}`;
-        if (response.data.run?.output) return response.data.run.output;
-        if (response.data.compile?.stderr) return `❌ Compilation Error: ${response.data.compile.stderr}`;
-        return '✅ Code executed successfully (no output)';
-      }
-    },
-    {
-      name: 'CodeX API',
-      execute: async () => {
-        const response = await axios.post('https://api.codex.jaagrav.in/execute', {
-          code: code,
-          language: config.codexLang,
-          input: ''
-        }, { timeout: 10000 });
-        
-        if (response.data.error) return `❌ Error: ${response.data.error}`;
-        return response.data.output || '✅ Code executed successfully (no output)';
-      }
-    },
-    {
-      name: 'GDebug API',
-      execute: async () => {
-        const response = await axios.post('https://gdb.gdplabs.com/api/run', {
-          language: language,
-          code: code,
-          stdin: ''
-        }, { timeout: 10000 });
-        
-        if (response.data.output) return response.data.output;
-        return '✅ Code executed successfully (no output)';
-      }
+  // Use the FREE community endpoint (no API key needed!)
+  try {
+    console.log(`🚀 Executing ${language} via free Judge0 CE...`);
+    
+    // Submit code
+    const submitResponse = await axios.post('https://ce.judge0.com/submissions', {
+      source_code: code,
+      language_id: lang.id,
+      stdin: ""
+    }, {
+      headers: { 'Content-Type': 'application/json' },
+      timeout: 10000
+    });
+    
+    const token = submitResponse.data.token;
+    console.log(`📝 Submission token: ${token}`);
+    
+    // Wait and get result
+    await new Promise(resolve => setTimeout(resolve, 2000));
+    
+    const resultResponse = await axios.get(`https://ce.judge0.com/submissions/${token}`, {
+      timeout: 10000
+    });
+    
+    const result = resultResponse.data;
+    let output = '';
+    
+    if (result.compile_output) {
+      output = `❌ Compilation Error:\n${result.compile_output}`;
+    } else if (result.stderr) {
+      output = `❌ Runtime Error:\n${result.stderr}`;
+    } else if (result.stdout) {
+      output = result.stdout;
+    } else {
+      output = `✅ ${language.toUpperCase()} code executed successfully (no output)`;
     }
-  ];
-  
-  // Try each API until one works
-  for (const api of apis) {
+    
+    console.log(`✅ ${language} executed successfully`);
+    res.json({ output: output.trim() });
+    
+  } catch (error) {
+    console.error(`Free Judge0 error:`, error.message);
+    
+    // Try alternative free endpoint
     try {
-      console.log(`🔄 Trying ${api.name} for ${language}...`);
-      const output = await api.execute();
+      console.log(`🔄 Trying alternative endpoint...`);
       
-      if (output && !output.includes('Could not execute') && !output.includes('error')) {
-        console.log(`✅ ${language} executed via ${api.name}`);
-        res.json({ output: output.trim() });
-        return;
-      }
-    } catch (err) {
-      console.log(`${api.name} failed:`, err.message);
+      const altSubmit = await axios.post('https://judge0-occ7.onrender.com/submissions', {
+        source_code: code,
+        language_id: lang.id,
+        stdin: ""
+      }, { timeout: 10000 });
+      
+      const altToken = altSubmit.data.token;
+      await new Promise(resolve => setTimeout(resolve, 2000));
+      
+      const altResult = await axios.get(`https://judge0-occ7.onrender.com/submissions/${altToken}`, {
+        timeout: 10000
+      });
+      
+      const result = altResult.data;
+      let output = '';
+      
+      if (result.compile_output) output = `❌ Compilation Error:\n${result.compile_output}`;
+      else if (result.stderr) output = `❌ Runtime Error:\n${result.stderr}`;
+      else if (result.stdout) output = result.stdout;
+      else output = `✅ ${language.toUpperCase()} executed successfully`;
+      
+      console.log(`✅ ${language} executed via alternative endpoint`);
+      res.json({ output: output.trim() });
+      return;
+      
+    } catch (altError) {
+      console.log(`Alternative endpoint also failed`);
     }
-  }
-  
-  // PROPER JavaScript conversion for each language
-  let jsCode = '';
-  let conversionNotes = '';
-  
-  if (language === 'python') {
-    // Convert Python to JavaScript properly
-    jsCode = code
-      .replace(/print\((.*?)\)/g, 'console.log($1)')
-      .replace(/def (\w+)\((.*?)\):/g, 'function $1($2) {')
-      .replace(/if __name__ == ['"]__main__['"]:/, '// Main execution')
-      .replace(/    /g, '  ')
-      .replace(/:$/gm, '')
-      .trim();
     
-    // Add closing braces for functions
-    const functionCount = (code.match(/def /g) || []).length;
-    if (functionCount > 0) {
-      jsCode += '\n}';
-    }
-    
-    conversionNotes = '• print() → console.log()\n• def function() → function function()\n• Indentation converted to braces';
-    
-  } else if (language === 'java') {
-    // Convert Java to JavaScript properly
-    jsCode = code
-      .replace(/System\.out\.println\((.*?)\);/g, 'console.log($1);')
-      .replace(/public class (\w+)\s*{/g, '// JavaScript equivalent of Java class $1')
-      .replace(/public static void main\(String\[\] args\)\s*{/g, 'function main() {')
-      .replace(/}\s*$/g, '}\n\n// Call the main function\nmain();')
-      .replace(/;/g, ';');
-    
-    conversionNotes = '• System.out.println() → console.log()\n• Class structure simplified\n• main() function auto-executes';
-    
-  } else if (language === 'cpp') {
-    // Convert C++ to JavaScript properly
-    jsCode = code
-      .replace(/#include <.*>/g, '// C++ include directives removed for JavaScript')
-      .replace(/std::cout << (.*?) << std::endl;/g, 'console.log($1);')
-      .replace(/int main\(\)\s*{/g, 'function main() {')
-      .replace(/return 0;\s*}/g, '}\n\n// Execute main function\nmain();')
-      .trim();
-    
-    conversionNotes = '• #include removed (not needed in JS)\n• std::cout → console.log()\n• main() function auto-executes';
-  }
-  
-  // Clean up the converted code
-  jsCode = jsCode
-    .replace(/^{\s*$/gm, '{')
-    .replace(/^\s*}$/gm, '}')
-    .trim();
-  
-  // If conversion produced invalid code, provide a working example
-  if (!jsCode || jsCode.length < 10 || jsCode.includes('def ') || jsCode.includes('cout')) {
-    jsCode = `// Your ${language.toUpperCase()} code converted to JavaScript:
-console.log("Hello from PeerSync JavaScript!");
-
-// To implement your specific logic, you would write:
-// ${code.split('\n')[0].substring(0, 100)}`;
-    
-    conversionNotes = `Your ${language.toUpperCase()} code was automatically translated to JavaScript.
-Run this code to see the output, then modify it for your needs.`;
-  }
-  
-  res.json({
-    output: `⚠️ ${language.toUpperCase()} execution is temporarily unavailable (API rate limits).
+    // Final fallback
+    res.json({
+      output: `⚠️ ${language.toUpperCase()} execution is currently unavailable.
 
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 
@@ -403,35 +352,29 @@ ${code}
 
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 
-✅ JAVASCRIPT EQUIVALENT (READY TO RUN):
-━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-${jsCode}
-━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+💡 FREE SOLUTIONS (No credit card needed):
 
-📝 CONVERSION NOTES:
-${conversionNotes}
+1️⃣ USE JAVASCRIPT (Works 100% in PeerSync):
+   • Click language dropdown → Select "JavaScript"
+   • Your logic can be rewritten in JavaScript
 
-💡 HOW TO RUN THIS CODE:
-━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-1. Click the language dropdown (currently shows "${language.toUpperCase()}")
-2. Select "JavaScript" from the list
-3. COPY the JavaScript code from above
-4. PASTE it in the editor
-5. Click "Run Code" - It will work instantly!
+2️⃣ USE REPLIT (FREE & RELIABLE):
+   • Go to https://replit.com
+   • Create a new ${language.toUpperCase()} repl
+   • Paste your code and run (no limits, no payment)
 
-━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-
-📝 TO RUN ${language.toUpperCase()} LOCALLY:
-${language === 'python' ? '• python script.py' : language === 'java' ? '• javac Main.java && java Main' : '• g++ main.cpp -o main && ./main'}
-
-🌐 ONLINE RUNNER (FREE):
-• https://replit.com (Best for ${language.toUpperCase()})
+3️⃣ RUN LOCALLY (FREE FOREVER):
+   ${language === 'python' ? '• Install Python: https://python.org\n   • Save as script.py\n   • Run: python script.py' : 
+     language === 'java' ? '• Install JDK: https://adoptium.net\n   • Save as Main.java\n   • Run: javac Main.java && java Main' : 
+     '• Install GCC: https://gcc.gnu.org\n   • Save as main.cpp\n   • Run: g++ main.cpp -o main && ./main'}
 
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 
-💡 TIP: JavaScript works 100% in PeerSync with no delays!
-   Once you verify your logic in JavaScript, you can implement it in ${language.toUpperCase()}.`
-  });
+💡 RECOMMENDATION:
+For the best experience in PeerSync, use JavaScript. 
+For other languages, use Replit or run locally - both are free!`
+    });
+  }
 });
 
 // --- 3. AI SUMMARY (GEMINI 2.5 FLASH) ---
