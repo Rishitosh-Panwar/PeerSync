@@ -353,8 +353,7 @@ export default function Login() {
                 </p>
                 
                 <div className="demo-credentials">
-                    <p>Demo Account:</p>
-                    <code>Email: demo@peersync.com<br/>Password: demo123</code>
+              
                     <small style={{ display: 'block', marginTop: '10px' }}>
                         💡 <strong>Password Login:</strong> Use email + password<br/>
                         💡 <strong>Magic Link:</strong> Receive email with login link<br/>

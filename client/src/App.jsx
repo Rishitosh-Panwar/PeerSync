@@ -1,7 +1,7 @@
 // Add at the very top of App.jsx, before any imports
-// CACHE CLEARER VERSION 2.0
+// CACHE CLEARER VERSION 3.0
 const clearOldCache = () => {
-    const version = '2.0.0';
+    const version = '3.0.0';
     const storedVersion = localStorage.getItem('app_version');
     
     if (storedVersion !== version) {
@@ -36,7 +36,6 @@ import Draggable from 'react-draggable';
 import jsPDF from 'jspdf'; 
 import axios from 'axios';
 import './App.css';
-
 
 // Get backend URL from environment variable
 const BACKEND_URL = import.meta.env.VITE_BACKEND_URL || "https://peersync-backend.onrender.com";
@@ -83,6 +82,7 @@ export default function App() {
     const recognitionRef = useRef(null);
     const jitsiApiRef = useRef(null);
     const draggableNodeRef = useRef(null);
+    const keepAliveIntervalRef = useRef(null);
 
     const [language, setLanguage] = useState("javascript");
     const [code, setCode] = useState(starterCode.javascript);
@@ -98,6 +98,7 @@ export default function App() {
     const [jitsiToken, setJitsiToken] = useState("");
     const [jitsiActive, setJitsiActive] = useState(false);
     const [jitsiError, setJitsiError] = useState(false);
+    const [tokenExpiry, setTokenExpiry] = useState(null);
 
     const [showAIOverlay, setShowAIOverlay] = useState(false);
     const [aiData, setAiData] = useState(null);
@@ -217,26 +218,56 @@ export default function App() {
         };
     }, []);
 
-    // Fetch Jitsi token
-    useEffect(() => {
-        const getJitsiToken = async () => {
-            try {
-                console.log('Fetching Jitsi token...');
-                const res = await api.get('/api/jitsi-token');
-                console.log('✅ Jitsi token received');
-                setJitsiToken(res.data.token);
-            } catch (err) {
-                console.error("❌ JWT Fetch Failed:", err.message);
-                if (err.code === 'ECONNABORTED') {
-                    addNotification('error', 'Request timeout - check backend');
-                } else {
-                    addNotification('error', 'Failed to initialize video call');
+    // Fetch Jitsi token with user info and room
+    const getJitsiToken = async () => {
+        try {
+            console.log('Fetching Jitsi token for room:', roomId);
+            const userName = localStorage.getItem('userName') || "PeerSync User";
+            const userId = localStorage.getItem('userId') || "peersync-user-1";
+            
+            const res = await api.get('/api/jitsi-token', {
+                params: {
+                    room: roomId,
+                    userName: userName,
+                    userId: userId
                 }
-                setJitsiError(true);
+            });
+            
+            console.log('✅ Jitsi token received');
+            console.log('Token expires at:', new Date(res.data.expiresAt * 1000).toLocaleString());
+            
+            setJitsiToken(res.data.token);
+            setTokenExpiry(res.data.expiresAt);
+            
+            // Setup auto-refresh - refresh 30 minutes before expiry
+            const now = Math.floor(Date.now() / 1000);
+            const refreshIn = (res.data.expiresAt - now - 1800) * 1000; // 30 minutes before
+            
+            if (refreshIn > 0) {
+                setTimeout(() => {
+                    console.log('🔄 Refreshing Jitsi token...');
+                    getJitsiToken();
+                }, refreshIn);
             }
-        };
-        getJitsiToken();
-    }, []);
+            
+        } catch (err) {
+            console.error("❌ JWT Fetch Failed:", err.message);
+            if (err.code === 'ECONNABORTED') {
+                addNotification('error', 'Request timeout - check backend');
+            } else if (err.response?.status === 500) {
+                addNotification('error', 'Server error - check backend logs');
+            } else {
+                addNotification('error', 'Failed to initialize video call');
+            }
+            setJitsiError(true);
+        }
+    };
+
+    useEffect(() => {
+        if (roomId) {
+            getJitsiToken();
+        }
+    }, [roomId]);
 
     // Speech Recognition
     useEffect(() => {
@@ -269,17 +300,25 @@ export default function App() {
             recognitionRef.current.onerror = (event) => {
                 console.error("Speech recognition error:", event.error);
                 setIsListening(false);
+                if (event.error === 'not-allowed') {
+                    addNotification('error', 'Microphone access denied');
+                }
             };
 
             if (isListening && socket.connected) {
                 try { 
                     recognitionRef.current.start(); 
+                    console.log('🎤 Speech recognition started');
                 } catch(e) { 
                     console.error(e);
                     setIsListening(false);
                 }
             }
+        } else {
+            console.warn('Speech recognition not supported');
+            addNotification('warning', 'Speech recognition not supported in this browser');
         }
+        
         return () => { 
             if (recognitionRef.current) {
                 try {
@@ -289,53 +328,170 @@ export default function App() {
         };
     }, [speechLang, isListening, roomId]);
 
-    // Jitsi initialization
+    // Jitsi initialization with RS256 token
     const initJitsi = () => {
         if (window.JitsiMeetExternalAPI && jitsiContainerRef.current && jitsiToken) {
             try {
                 setJitsiActive(true);
-                const domain = "8x8.vc"; 
+                const domain = "8x8.vc";
+                
+                // Use consistent room name format
+                const roomName = roomId; // Use roomId directly or prefix if needed
+                
+                console.log('🎥 Initializing Jitsi with room:', roomName);
+                console.log('🔑 Token length:', jitsiToken.length);
+                
                 const options = {
-                    roomName: `vpaas-magic-cookie-8f291ebf52794eb5896baaed63b01738/PeerSyncRoom-${roomId}`,
-                    jwt: jitsiToken,
+                    roomName: roomName,
+                    jwt: jitsiToken,  // RS256 token with kid
                     width: "100%", 
                     height: "100%",
                     parentNode: jitsiContainerRef.current,
                     configOverwrite: { 
                         prejoinPageEnabled: false,
                         startWithAudioMuted: true,
-                        startWithVideoMuted: true
+                        startWithVideoMuted: false,
+                        disableDeepLinking: true,
+                        enableWelcomePage: false,
+                        // For 5-hour call stability
+                        channelLastN: 4, // Limit video streams for stability
+                        disabledSounds: [],
+                        defaultLanguage: 'en',
+                        disableInviteFunctions: true,
+                        disableProfile: false,
+                        enableCalendarIntegration: false,
+                        enableEmailIntegration: false,
+                        enableGoogleAPIs: false,
+                        // Keep connection alive
+                        p2p: {
+                            enabled: false // Disable P2P for better stability
+                        },
+                        // Connection quality settings
+                        resolution: 720,
+                        constraints: {
+                            video: {
+                                height: {
+                                    ideal: 720,
+                                    max: 720,
+                                    min: 180
+                                }
+                            }
+                        }
                     },
                     interfaceConfigOverwrite: { 
                         TILE_VIEW_MAX_COLUMNS: 2,
-                        SHOW_JITSI_WATERMARK: false
+                        SHOW_JITSI_WATERMARK: false,
+                        SHOW_BRAND_WATERMARK: false,
+                        TOOLBAR_BUTTONS: [
+                            'microphone', 'camera', 'closedcaptions', 'desktop', 
+                            'fullscreen', 'fodeviceselection', 'hangup', 
+                            'profile', 'chat', 'settings', 'raisehand',
+                            'videoquality', 'tileview'
+                        ],
+                        SETTINGS_SECTIONS: ['devices', 'language', 'moderator', 'profile']
                     }
                 };
 
                 jitsiApiRef.current = new window.JitsiMeetExternalAPI(domain, options);
                 
-                jitsiApiRef.current.addEventListeners({
-                    videoConferenceLeft: () => {
-                        setJitsiActive(false);
-                        if (jitsiApiRef.current) jitsiApiRef.current.dispose();
-                    },
-                    videoConferenceJoined: () => {
-                        console.log('Jitsi conference joined');
-                        addNotification('success', 'Video call connected');
-                    }
+                // Add event listeners
+                jitsiApiRef.current.addListener('videoConferenceJoined', () => {
+                    console.log('✅ Jitsi conference joined successfully');
+                    addNotification('success', 'Video call connected');
+                    setJitsiError(false);
                 });
+                
+                jitsiApiRef.current.addListener('videoConferenceLeft', () => {
+                    console.log('Jitsi conference left');
+                    setJitsiActive(false);
+                });
+                
+                jitsiApiRef.current.addListener('connectionEstablished', () => {
+                    console.log('Jitsi connection established');
+                });
+                
+                jitsiApiRef.current.addListener('connectionFailed', (error) => {
+                    console.error('Jitsi connection failed:', error);
+                    setJitsiError(true);
+                    addNotification('error', 'Video connection failed');
+                });
+                
+                jitsiApiRef.current.addListener('readyToClose', () => {
+                    console.log('Jitsi ready to close');
+                });
+                
             } catch (error) {
-                console.error('Jitsi error:', error);
+                console.error('Jitsi initialization error:', error);
                 setJitsiError(true);
+                addNotification('error', 'Failed to initialize video call');
             }
+        } else if (!window.JitsiMeetExternalAPI) {
+            console.log('Waiting for Jitsi API to load...');
+            // Retry after a delay if API not loaded
+            setTimeout(() => {
+                if (jitsiToken && !jitsiApiRef.current) {
+                    console.log('Retrying Jitsi initialization...');
+                    initJitsi();
+                }
+            }, 1000);
         }
+    };
+
+    // Keep connection alive for long calls
+    const startKeepAlive = () => {
+        if (keepAliveIntervalRef.current) {
+            clearInterval(keepAliveIntervalRef.current);
+        }
+        
+        keepAliveIntervalRef.current = setInterval(() => {
+            if (jitsiApiRef.current && jitsiActive) {
+                try {
+                    // Simple operation to keep connection alive
+                    jitsiApiRef.current.executeCommand('toggleTileView');
+                    setTimeout(() => {
+                        if (jitsiApiRef.current) {
+                            jitsiApiRef.current.executeCommand('toggleTileView');
+                        }
+                    }, 100);
+                    console.log('💓 Jitsi keep-alive ping');
+                } catch (e) {
+                    console.warn('Keep-alive failed:', e);
+                }
+            }
+            
+            // Also check socket connection
+            if (!socket.connected) {
+                console.log('Reconnecting socket...');
+                socket.connect();
+            }
+        }, 25 * 60 * 1000); // Every 25 minutes
     };
 
     // Room and socket setup
     useEffect(() => {
         if (jitsiToken && roomId && socket.connected) {
-            initJitsi();
+            // Load Jitsi script if not already loaded
+            if (!window.JitsiMeetExternalAPI) {
+                const script = document.createElement('script');
+                script.src = 'https://8x8.vc/vpaas-magic-cookie-8f291ebf52794eb5896baaed63b01738/external_api.js';
+                script.async = true;
+                script.onload = () => {
+                    console.log('Jitsi API loaded, initializing...');
+                    initJitsi();
+                    startKeepAlive();
+                };
+                script.onerror = () => {
+                    console.error('Failed to load Jitsi API');
+                    setJitsiError(true);
+                    addNotification('error', 'Failed to load video call library');
+                };
+                document.body.appendChild(script);
+            } else {
+                initJitsi();
+                startKeepAlive();
+            }
             
+            // Join room via socket
             const myName = localStorage.getItem('userName') || "User_" + Math.floor(Math.random() * 1000);
             socket.emit('join_room', { roomId, userName: myName });
             
@@ -345,25 +501,47 @@ export default function App() {
             }, 500);
 
             // Socket listeners
-            const onInitialCode = (savedCode) => setCode(savedCode);
-            const onCodeUpdate = (newCode) => setCode(newCode);
-            const onDriverChanged = ({ driverId, driverName: newDriverName }) => {
-                setIsDriver(socket.id === driverId);
-                setDriverName(newDriverName);
-                addNotification('info', socket.id === driverId ? '👑 You are driver!' : `👤 ${newDriverName} is driver`);
+            const onInitialCode = (savedCode) => {
+                setCode(savedCode);
+                console.log('Initial code loaded');
             };
+            
+            const onCodeUpdate = (newCode) => {
+                setCode(newCode);
+            };
+            
+            const onDriverChanged = ({ driverId, driverName: newDriverName }) => {
+                const amIDriver = socket.id === driverId;
+                setIsDriver(amIDriver);
+                setDriverName(newDriverName);
+                addNotification('info', amIDriver ? '👑 You are the driver!' : `👤 ${newDriverName} is driving`);
+                console.log('Driver changed:', amIDriver ? 'You are driver' : `${newDriverName} is driver`);
+            };
+            
             const onReceiveCaption = (data) => {
-                setRemoteSubtitle(speechLang.startsWith('hi') ? data.hi : data.en);
+                const text = speechLang.startsWith('hi') ? data.hi : data.en;
+                setRemoteSubtitle(text);
                 setTimeout(() => setRemoteSubtitle(""), 4000);
             };
+            
             const onReceiveSummary = (data) => {
                 setAiData(data);
                 setShowAIOverlay(true);
                 setActiveTab('logic');
                 addNotification('success', '📚 AI Summary generated!');
             };
-            const onReceiveOutput = (remoteOutput) => setOutput(remoteOutput);
-            const onReceiveLanguage = (lang) => setLanguage(lang);
+            
+            const onReceiveOutput = (remoteOutput) => {
+                setOutput(remoteOutput);
+            };
+            
+            const onReceiveLanguage = (lang) => {
+                setLanguage(lang);
+            };
+            
+            const onNotification = (notification) => {
+                addNotification(notification.type || 'info', notification.message);
+            };
 
             socket.on('initial_code', onInitialCode);
             socket.on('code_update', onCodeUpdate);
@@ -372,6 +550,7 @@ export default function App() {
             socket.on('receive_summary', onReceiveSummary);
             socket.on('receive_output', onReceiveOutput);
             socket.on('receive_language', onReceiveLanguage);
+            socket.on('notification', onNotification);
 
             return () => { 
                 socket.off('initial_code', onInitialCode);
@@ -381,10 +560,19 @@ export default function App() {
                 socket.off('receive_summary', onReceiveSummary);
                 socket.off('receive_output', onReceiveOutput);
                 socket.off('receive_language', onReceiveLanguage);
-                if (jitsiApiRef.current) jitsiApiRef.current.dispose(); 
+                socket.off('notification', onNotification);
+                
+                if (keepAliveIntervalRef.current) {
+                    clearInterval(keepAliveIntervalRef.current);
+                }
+                
+                if (jitsiApiRef.current) {
+                    jitsiApiRef.current.dispose();
+                    jitsiApiRef.current = null;
+                }
             };
         }
-    }, [roomId, jitsiToken, socket.connected, speechLang]);
+    }, [roomId, jitsiToken, socket.connected]);
 
     // Add notification helper
     const addNotification = (type, message) => {
@@ -392,7 +580,7 @@ export default function App() {
         setNotifications(prev => [...prev, { id, type, message }]);
         setTimeout(() => {
             setNotifications(prev => prev.filter(n => n.id !== id));
-        }, 3000);
+        }, 4000);
     };
 
     const runCode = async () => {
@@ -446,6 +634,12 @@ export default function App() {
 
     const handleLayoutToggle = () => {
         setIsVideoMaximized(!isVideoMaximized);
+        // Also trigger Jitsi layout update
+        setTimeout(() => {
+            if (jitsiApiRef.current) {
+                jitsiApiRef.current.executeCommand('toggleTileView');
+            }
+        }, 100);
     };
 
     const requestToDrive = () => {
@@ -453,6 +647,7 @@ export default function App() {
         if (name && socket.connected) {
             localStorage.setItem('userName', name);
             socket.emit("claim_driver", { roomId, name });
+            addNotification('info', `Requested to become driver as ${name}`);
         }
     };
 
@@ -463,8 +658,9 @@ export default function App() {
         doc.text("Code Logic & Summary Report", 10, 20);
         doc.setFontSize(12);
         doc.text(`Language: ${language}`, 10, 30);
-        doc.text("Logic Explanation:", 10, 40);
-        doc.text(aiData.logic || aiData.summary || "No data", 10, 50, { maxWidth: 180 });
+        doc.text(`Generated: ${new Date().toLocaleString()}`, 10, 40);
+        doc.text("Logic Explanation:", 10, 50);
+        doc.text(aiData.logic || aiData.summary || "No data", 10, 60, { maxWidth: 180 });
         
         if (aiData.flashcards?.length) {
             doc.addPage();
@@ -482,7 +678,8 @@ export default function App() {
                 yPos += 40;
             });
         }
-        doc.save("PeerSync_Notes.pdf");
+        doc.save(`PeerSync_Notes_${roomId}.pdf`);
+        addNotification('success', 'PDF downloaded');
     };
 
     // Connection error screen
@@ -499,6 +696,7 @@ export default function App() {
                     <li>URL in .env is correct</li>
                 </ul>
                 <button onClick={() => window.location.reload()}>Refresh Page</button>
+                <button onClick={() => socket.connect()} style={{marginLeft: '10px'}}>Retry Connection</button>
             </div>
         );
     }
@@ -513,9 +711,14 @@ export default function App() {
                     {connectionStatus === 'disconnected' && '🔴 Disconnected'}
                     {connectionStatus === 'error' && '🔴 Connection Error'}
                 </div>
-                <div className="backend-url">
-                    {BACKEND_URL}
+                <div className="room-info">
+                    Room: {roomId}
                 </div>
+                {tokenExpiry && (
+                    <div className="token-info">
+                        🔑 Expires: {new Date(tokenExpiry * 1000).toLocaleTimeString()}
+                    </div>
+                )}
             </div>
 
             {/* Notifications */}
@@ -618,7 +821,9 @@ export default function App() {
                     options={{ 
                         fontSize: 16, 
                         readOnly: !isDriver,
-                        automaticLayout: true
+                        automaticLayout: true,
+                        minimap: { enabled: false },
+                        scrollBeyondLastLine: false
                     }}
                 />
                 
@@ -663,11 +868,11 @@ export default function App() {
                                     <div className="logic-section">
                                         <div className="logic-card">
                                             <h4>🎯 Approach</h4>
-                                            <p>{aiData.approach || "..."}</p>
+                                            <p>{aiData.approach || "No approach data available"}</p>
                                         </div>
                                         <div className="logic-card">
                                             <h4>💡 Logic</h4>
-                                            <p>{aiData.logic || aiData.summary || "..."}</p>
+                                            <p>{aiData.logic || aiData.summary || "No logic data available"}</p>
                                         </div>
                                     </div>
                                 )}
@@ -715,15 +920,24 @@ export default function App() {
             </div>
 
             <div className={`video-panel ${isVideoMaximized ? 'maximized' : ''}`}>
-                <button onClick={handleLayoutToggle} className="video-toggle">
+                <button onClick={handleLayoutToggle} className="video-toggle" title={isVideoMaximized ? 'Minimize' : 'Maximize'}>
                     {isVideoMaximized ? '▶' : '◀'}
                 </button>
                 <div ref={jitsiContainerRef} className={`jitsi-container ${jitsiActive ? 'active' : ''}`}>
-                    {!jitsiToken && !jitsiError && <div className="auth-message">🔐 Authenticating Jitsi...</div>}
+                    {!jitsiToken && !jitsiError && (
+                        <div className="auth-message">
+                            <div className="spinner"></div>
+                            <p>🔐 Authenticating with 8x8...</p>
+                        </div>
+                    )}
                     {jitsiError && (
                         <div className="jitsi-error">
                             <p>❌ Video call unavailable</p>
-                            <button onClick={() => window.location.reload()}>Retry</button>
+                            <button onClick={() => {
+                                setJitsiError(false);
+                                setJitsiToken("");
+                                getJitsiToken();
+                            }}>Retry Connection</button>
                         </div>
                     )}
                 </div>

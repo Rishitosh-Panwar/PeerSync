@@ -21,7 +21,7 @@ app.use(express.json());
 
 // FIXED CORS: Added strict matching for Vite ports
 app.use(cors({ 
- origin: ["http://localhost:5173", "http://localhost:5174", "https://fugal-nonsophistically-charis.ngrok-free.dev", "https://peersync-frontend.onrender.com"], 
+  origin: ["http://localhost:5173", "http://localhost:5174", "https://fugal-nonsophistically-charis.ngrok-free.dev", "https://peersync-frontend.onrender.com"], 
   credentials: true,
   allowedHeaders: ["Content-Type", "Authorization", "Bypass-Tunnel-Reminder"]
 }));
@@ -34,54 +34,85 @@ mongoose.connect(process.env.MONGO_URI)
 // --- AUTH ROUTES ---
 app.use('/api/auth', authRoutes);
 
-// Add this near the top of your server.js, after app.use() statements
+// Health check endpoint
 app.get('/api/health', (req, res) => {
-    res.status(200).json({ 
-        status: 'healthy', 
-        timestamp: new Date().toISOString(),
-        uptime: process.uptime()
-    });
+  res.status(200).json({ 
+    status: 'healthy', 
+    timestamp: new Date().toISOString(),
+    uptime: process.uptime()
+  });
 });
 
-// --- 1. JITSI JWT GENERATION (FIXED) ---
+// --- 1. JITSI JWT GENERATION (FIXED FOR 8x8.vc WITH RSA) ---
 app.get("/api/jitsi-token", (req, res) => {
   try {
-    // For testing on Render, use HS256 instead of RS256
-    const appId = "vpaas-magic-cookie-8f291ebf52794eb5896baaed63b01738";
-    const now = Math.floor(Date.now() / 1000);
+    const appId = process.env.JITSI_APP_ID;
+    const kid = process.env.JITSI_KID;
+    let privateKey = process.env.JITSI_PRIVATE_KEY;
     
-    // Use HS256 algorithm (simpler, doesn't require private key)
-    const token = jwt.sign(
-      {
-        aud: 'jitsi',
-        iss: 'chat',
-        sub: appId,
-        room: '*',
-        exp: now + (5 * 60 * 60), // 5 hours
-        nbf: now,
-        iat: now,
-        context: {
-          user: {
-            name: "PeerSync User",
-            email: "user@peersync.local",
-            id: "peersync-user-1",
-            affiliation: "owner",
-            moderator: true
-          },
-          features: {
-            recording: false,
-            livestreaming: false,
-            transcription: false,
-            'outbound-call': false
-          }
+    // Clean up private key format if needed
+    if (privateKey && !privateKey.includes('\\n')) {
+      privateKey = privateKey.replace(/\\n/g, '\n');
+    }
+    
+    const now = Math.floor(Date.now() / 1000);
+    const roomName = req.query.room || "peersyncroom-q1dqbgf";
+    const userName = req.query.userName || "PeerSync User";
+    const userId = req.query.userId || "peersync-user-1";
+    
+    console.log(`🔐 Generating JWT for room: ${roomName}, user: ${userName}`);
+    
+    // Create the payload according to Jitsi/8x8 specification
+    const payload = {
+      aud: "jitsi",
+      iss: "chat",
+      sub: appId,
+      room: roomName,
+      exp: now + (5.5 * 60 * 60), // 5.5 hours (safe margin for 5-hour calls)
+      nbf: now,
+      iat: now,
+      context: {
+        user: {
+          name: userName,
+          email: `${userId}@peersync.local`,
+          id: userId,
+          avatar: "",
+          moderator: true,
+          affiliation: "owner"
+        },
+        features: {
+          recording: false,
+          livestreaming: false,
+          transcription: false,
+          "outbound-call": false,
+          "sip-outbound-call": false
         }
-      },
-      'your-secret-key-change-this-in-production', // Simple secret key
-      { algorithm: 'HS256' }
-    );
+      }
+    };
+    
+    // Sign with RS256 and include kid in header
+    const token = jwt.sign(payload, privateKey, {
+      algorithm: 'RS256',
+      keyid: kid,  // THIS FIXES THE "Missing Key ID (kid)" ERROR
+      header: {
+        alg: 'RS256',
+        typ: 'JWT',
+        kid: kid
+      }
+    });
     
     console.log('✅ Jitsi token generated successfully');
-    res.json({ token });
+    console.log(`   - Algorithm: RS256`);
+    console.log(`   - Key ID: ${kid}`);
+    console.log(`   - Expires: ${new Date(payload.exp * 1000).toISOString()}`);
+    console.log(`   - Duration: ${(payload.exp - now) / 3600} hours`);
+    
+    res.json({ 
+      token,
+      expiresAt: payload.exp,
+      room: roomName
+    });
+    
   } catch (error) {
     console.error("❌ JWT Generation Error:", error.message);
     console.error("Stack:", error.stack);
@@ -176,7 +207,7 @@ app.post("/api/execute", async (req, res) => {
 
 // --- 3. AI SUMMARY (GEMINI 2.5 FLASH) ---
 const genAI = new GoogleGenerativeAI(process.env.GEMINI_API_KEY);
-const PRIMARY_MODEL = "gemini-2.5-flash"; // Ensuring the model is correct
+const PRIMARY_MODEL = "gemini-2.5-flash";
 
 app.post("/api/summarize", async (req, res) => {
   const { roomId, transcript = "General coding session", code = "" } = req.body;
@@ -196,8 +227,8 @@ app.post("/api/summarize", async (req, res) => {
 
   try {
     const model = genAI.getGenerativeModel({ 
-        model: PRIMARY_MODEL, 
-        generationConfig: { responseMimeType: "application/json" } 
+      model: PRIMARY_MODEL, 
+      generationConfig: { responseMimeType: "application/json" } 
     });
 
     const result = await model.generateContent(prompt);
@@ -206,7 +237,7 @@ app.post("/api/summarize", async (req, res) => {
     const cleanJsonString = responseText.replace(/```json|```/g, "").trim();
     const data = JSON.parse(cleanJsonString);
 
-    // Save to DB (Ensure your SessionLog model supports 'generatedFlashcards')
+    // Save to DB
     await SessionLog.findOneAndUpdate(
       { roomId },
       { 
@@ -229,15 +260,16 @@ app.post("/api/summarize", async (req, res) => {
 // --- 4. SOCKET.IO ---
 const io = new Server(server, { 
   cors: { 
-    origin: "*", // Allows both localhost and the ngrok tunnel during development
+    origin: "*",
     methods: ["GET", "POST"],
     allowedHeaders: ["Bypass-Tunnel-Reminder"],
     credentials: true
   } 
 });
+
 const activeRooms = {}; 
 
-// Translation function with language detection
+// Translation function
 async function translateText(text, targetLang) {
   if (targetLang === 'en' || !targetLang) return text;
   
@@ -251,136 +283,124 @@ async function translateText(text, targetLang) {
     return translateRes.data.translatedText;
   } catch (error) {
     console.error("Translation error:", error.message);
-    return text; // Fallback to original text
+    return text;
   }
 }
 
-io.on("connection", (socket) => {
-    // 1. JOIN ROOM & INITIAL SYNC
-    socket.on("join_room", ({ roomId, userName }) => {
-        socket.join(roomId);
-        
-        if (!activeRooms[roomId]) {
-            activeRooms[roomId] = { 
-                code: starterCode.javascript || "// Welcome to PeerSync Lab", 
-                driver: socket.id, 
-                driverName: userName || "Anonymous" 
-            };
-        }
-        
-        socket.emit("initial_code", activeRooms[roomId].code);
-        
-        io.to(roomId).emit("driver_changed", {
-            driverId: activeRooms[roomId].driver,
-            driverName: activeRooms[roomId].driverName
-        });
-    });
-
-    // Request driver info
-    socket.on("request_driver_info", ({ roomId }) => {
-        if (activeRooms[roomId]) {
-            socket.emit("driver_changed", {
-                driverId: activeRooms[roomId].driver,
-                driverName: activeRooms[roomId].driverName
-            });
-        }
-    });
-
-    // 2. CLAIM DRIVER
-    socket.on("claim_driver", ({ roomId, name }) => {
-        if (activeRooms[roomId]) {
-            activeRooms[roomId].driver = socket.id;
-            activeRooms[roomId].driverName = name;
-
-            io.to(roomId).emit("driver_changed", {
-                driverId: socket.id,
-                driverName: name
-            });
-            
-            // Notify all users who is now driver
-            io.to(roomId).emit("notification", {
-                type: "driver_change",
-                message: `👑 ${name} is now the driver`,
-                timestamp: new Date().toISOString()
-            });
-        }
-    });
-
-    // 3. CAPTION BROADCASTING WITH DYNAMIC TRANSLATION
-    socket.on("send_caption", async ({ roomId, text }) => {
-        try {
-            // Get all sockets in the room to determine their language preferences
-            const sockets = await io.in(roomId).fetchSockets();
-            const userLanguages = {};
-            
-            // We need to track user language preferences - you may want to store this in activeRooms
-            // For now, we'll broadcast both English and Hindi and let frontend choose
-            
-            const translations = {
-                en: text
-            };
-            
-            // Translate to Hindi for Hindi-preferring users
-            const hindiText = await translateText(text, 'hi');
-            translations.hi = hindiText;
-            
-            // Broadcast both versions
-            io.to(roomId).emit("receive_caption", translations);
-            
-        } catch (error) {
-            console.error("Caption broadcast error:", error);
-            io.to(roomId).emit("receive_caption", { en: text, hi: text });
-        }
-    });
-
-    // 4. CODE & DATA SYNC
-    socket.on("code_update", ({ roomId, code }) => {
-        if (activeRooms[roomId]?.driver === socket.id) {
-            activeRooms[roomId].code = code;
-            socket.to(roomId).emit("code_update", code);
-        }
-    });
-
-    socket.on("share_output", ({ roomId, output }) => {
-        socket.to(roomId).emit("receive_output", output);
-    });
-
-    socket.on("language_change", ({ roomId, language }) => {
-        socket.to(roomId).emit("receive_language", language);
-    });
-
-    socket.on("share_summary", ({ roomId, aiData }) => {
-        io.to(roomId).emit("receive_summary", aiData);
-    });
-
-    socket.on("disconnect", () => {
-        console.log(`User Disconnected: ${socket.id}`);
-        
-        // Check if the disconnected user was a driver
-        for (const roomId in activeRooms) {
-            if (activeRooms[roomId]?.driver === socket.id) {
-                // Driver left, notify others
-                io.to(roomId).emit("notification", {
-                    type: "driver_left",
-                    message: "👋 Driver has left the room",
-                    timestamp: new Date().toISOString()
-                });
-                
-                // Reset driver to null (next person can claim)
-                activeRooms[roomId].driver = null;
-                activeRooms[roomId].driverName = null;
-            }
-        }
-    });
-});
-
-// Helper function for starter code (you may want to define this at the top)
 const starterCode = {
-    python: "def main():\n    print('Hello from PeerSync Python!')\n\nif __name__ == '__main__':\n    main()",
-    java: "public class Main {\n    public static void main(String[] args) {\n        System.out.println(\"Hello from PeerSync Java!\");\n    }\n}",
-    javascript: "console.log('Hello from PeerSync JavaScript!');",
-    cpp: "#include <iostream>\n\nint main() {\n    std::cout << \"Hello from PeerSync C++!\" << std::endl;\n    return 0;\n}"
+  python: "def main():\n    print('Hello from PeerSync Python!')\n\nif __name__ == '__main__':\n    main()",
+  java: "public class Main {\n    public static void main(String[] args) {\n        System.out.println(\"Hello from PeerSync Java!\");\n    }\n}",
+  javascript: "console.log('Hello from PeerSync JavaScript!');",
+  cpp: "#include <iostream>\n\nint main() {\n    std::cout << \"Hello from PeerSync C++!\" << std::endl;\n    return 0;\n}"
 };
 
-const PORT = 5000;
-server.listen(PORT, "0.0.0.0", () => console.log(`🚀 Backend live on port 5000`));
+io.on("connection", (socket) => {
+  // 1. JOIN ROOM & INITIAL SYNC
+  socket.on("join_room", ({ roomId, userName }) => {
+    socket.join(roomId);
+    
+    if (!activeRooms[roomId]) {
+      activeRooms[roomId] = { 
+        code: starterCode.javascript,
+        driver: socket.id, 
+        driverName: userName || "Anonymous" 
+      };
+    }
+    
+    socket.emit("initial_code", activeRooms[roomId].code);
+    
+    io.to(roomId).emit("driver_changed", {
+      driverId: activeRooms[roomId].driver,
+      driverName: activeRooms[roomId].driverName
+    });
+  });
+
+  // Request driver info
+  socket.on("request_driver_info", ({ roomId }) => {
+    if (activeRooms[roomId]) {
+      socket.emit("driver_changed", {
+        driverId: activeRooms[roomId].driver,
+        driverName: activeRooms[roomId].driverName
+      });
+    }
+  });
+
+  // 2. CLAIM DRIVER
+  socket.on("claim_driver", ({ roomId, name }) => {
+    if (activeRooms[roomId]) {
+      activeRooms[roomId].driver = socket.id;
+      activeRooms[roomId].driverName = name;
+      
+      io.to(roomId).emit("driver_changed", {
+        driverId: socket.id,
+        driverName: name
+      });
+      
+      io.to(roomId).emit("notification", {
+        type: "driver_change",
+        message: `👑 ${name} is now the driver`,
+        timestamp: new Date().toISOString()
+      });
+    }
+  });
+
+  // 3. CAPTION BROADCASTING WITH DYNAMIC TRANSLATION
+  socket.on("send_caption", async ({ roomId, text }) => {
+    try {
+      const translations = {
+        en: text
+      };
+      
+      const hindiText = await translateText(text, 'hi');
+      translations.hi = hindiText;
+      
+      io.to(roomId).emit("receive_caption", translations);
+    } catch (error) {
+      console.error("Caption broadcast error:", error);
+      io.to(roomId).emit("receive_caption", { en: text, hi: text });
+    }
+  });
+
+  // 4. CODE & DATA SYNC
+  socket.on("code_update", ({ roomId, code }) => {
+    if (activeRooms[roomId]?.driver === socket.id) {
+      activeRooms[roomId].code = code;
+      socket.to(roomId).emit("code_update", code);
+    }
+  });
+
+  socket.on("share_output", ({ roomId, output }) => {
+    socket.to(roomId).emit("receive_output", output);
+  });
+
+  socket.on("language_change", ({ roomId, language }) => {
+    socket.to(roomId).emit("receive_language", language);
+  });
+
+  socket.on("share_summary", ({ roomId, aiData }) => {
+    io.to(roomId).emit("receive_summary", aiData);
+  });
+
+  socket.on("disconnect", () => {
+    console.log(`User Disconnected: ${socket.id}`);
+    
+    for (const roomId in activeRooms) {
+      if (activeRooms[roomId]?.driver === socket.id) {
+        io.to(roomId).emit("notification", {
+          type: "driver_left",
+          message: "👋 Driver has left the room",
+          timestamp: new Date().toISOString()
+        });
+        
+        activeRooms[roomId].driver = null;
+        activeRooms[roomId].driverName = null;
+      }
+    }
+  });
+});
+
+const PORT = process.env.PORT || 5000;
+server.listen(PORT, "0.0.0.0", () => {
+  console.log(`🚀 Backend live on port ${PORT}`);
+  console.log(`📋 Jitsi configured with KID: ${process.env.JITSI_KID}`);
+});
