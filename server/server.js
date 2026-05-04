@@ -210,13 +210,13 @@ app.get("/api/jitsi-token", (req, res) => {
   }
 });
 
-// --- 2. CODE EXECUTION (Working Piston API Integration) ---
+// --- 2. CODE EXECUTION (Multi-API Fallback - No API Key Required) ---
 app.post("/api/execute", async (req, res) => {
   const { language, code } = req.body;
   
   console.log(`📝 Executing ${language} code...`);
   
-  // JavaScript - Local execution (always works)
+  // JavaScript - Local execution (always works 100%)
   if (language === 'javascript') {
     try {
       let output = '';
@@ -234,7 +234,7 @@ app.post("/api/execute", async (req, res) => {
         await func();
         output = logs.join('\n');
         if (!output.trim()) {
-          output = '✅ JavaScript code executed successfully';
+          output = '✅ JavaScript code executed successfully (no console output)';
         }
       } catch (error) {
         output = `❌ JavaScript Error: ${error.message}`;
@@ -245,103 +245,134 @@ app.post("/api/execute", async (req, res) => {
       res.json({ output });
       return;
     } catch (error) {
+      console.error('JS execution error:', error);
       res.status(500).json({ error: error.message });
       return;
     }
   }
   
-  // Python, Java, C++ via Piston API
-  const languages = {
-    python: { language: "python", version: "3.10.0" },
-    java: { language: "java", version: "15.0.2" },
-    cpp: { language: "cpp", version: "10.2.0" }
+  // Language configurations
+  const langConfigs = {
+    python: { pistonLang: 'python', pistonVer: '3.10.0', codexLang: 'python' },
+    java: { pistonLang: 'java', pistonVer: '15.0.2', codexLang: 'java' },
+    cpp: { pistonLang: 'cpp', pistonVer: '10.2.0', codexLang: 'cpp' }
   };
   
-  const lang = languages[language];
+  const config = langConfigs[language];
   
-  if (!lang) {
-    res.json({ output: `⚠️ ${language} not supported. Use JavaScript, Python, Java, or C++` });
+  if (!config) {
+    res.json({ output: `⚠️ ${language} is not supported. Use JavaScript, Python, Java, or C++` });
     return;
   }
   
-  try {
-    console.log(`🚀 Executing ${language} via Piston API...`);
-    
-    const response = await axios.post('https://emkc.org/api/v2/piston/execute', {
-      language: lang.language,
-      version: lang.version,
-      files: [{ content: code }],
-      stdin: "",
-      args: [],
-      compile_timeout: 10000,
-      run_timeout: 5000
-    }, {
-      timeout: 15000,
-      headers: { 'Content-Type': 'application/json' }
-    });
-    
-    let output = '';
-    
-    if (response.data.compile && response.data.compile.stderr) {
-      output = `❌ Compilation Error:\n${response.data.compile.stderr}`;
-    } else if (response.data.run && response.data.run.stderr) {
-      output = `❌ Runtime Error:\n${response.data.run.stderr}`;
-    } else if (response.data.run && response.data.run.output) {
-      output = response.data.run.output;
-    } else {
-      output = '✅ Code executed successfully (no output)';
+  // Try multiple free APIs (no API key needed)
+  const apis = [
+    {
+      name: 'Piston API',
+      execute: async () => {
+        const response = await axios.post('https://emkc.org/api/v2/piston/execute', {
+          language: config.pistonLang,
+          version: config.pistonVer,
+          files: [{ content: code }],
+          stdin: "",
+          args: [],
+          compile_timeout: 10000,
+          run_timeout: 5000
+        }, { timeout: 10000 });
+        
+        if (response.data.run?.stderr) return `❌ Error: ${response.data.run.stderr}`;
+        if (response.data.run?.output) return response.data.run.output;
+        if (response.data.compile?.stderr) return `❌ Compilation Error: ${response.data.compile.stderr}`;
+        return '✅ Code executed successfully (no output)';
+      }
+    },
+    {
+      name: 'CodeX API',
+      execute: async () => {
+        const response = await axios.post('https://api.codex.jaagrav.in/execute', {
+          code: code,
+          language: config.codexLang,
+          input: ''
+        }, { timeout: 10000 });
+        
+        if (response.data.error) return `❌ Error: ${response.data.error}`;
+        return response.data.output || '✅ Code executed successfully (no output)';
+      }
+    },
+    {
+      name: 'GDebug API',
+      execute: async () => {
+        const response = await axios.post('https://gdb.gdplabs.com/api/run', {
+          language: language,
+          code: code,
+          stdin: ''
+        }, { timeout: 10000 });
+        
+        if (response.data.output) return response.data.output;
+        return '✅ Code executed successfully (no output)';
+      }
     }
-    
-    console.log(`✅ ${language} executed successfully via Piston API`);
-    res.json({ output: output.trim() });
-    
-  } catch (error) {
-    console.error(`Piston API error:`, error.message);
-    
-    // Try alternative Piston API mirror
+  ];
+  
+  // Try each API until one works
+  for (const api of apis) {
     try {
-      console.log(`🔄 Trying alternative Piston API mirror...`);
-      const response2 = await axios.post('https://piston.codevoid.pw/api/v2/execute', {
-        language: lang.language,
-        version: lang.version,
-        files: [{ content: code }],
-        stdin: ""
-      }, {
-        timeout: 10000,
-        headers: { 'Content-Type': 'application/json' }
-      });
+      console.log(`🔄 Trying ${api.name} for ${language}...`);
+      const output = await api.execute();
       
-      let output = response2.data.run?.output || response2.data.run?.stderr || '✅ Code executed successfully';
-      console.log(`✅ ${language} executed via mirror API`);
-      res.json({ output: output.trim() });
-      return;
-      
-    } catch (mirrorError) {
-      console.error(`Mirror API also failed:`, mirrorError.message);
+      if (output && !output.includes('Could not execute') && !output.includes('error')) {
+        console.log(`✅ ${language} executed via ${api.name}`);
+        res.json({ output: output.trim() });
+        return;
+      }
+    } catch (err) {
+      console.log(`${api.name} failed:`, err.message);
     }
-    
-    // Provide helpful fallback message
-    res.json({
-      output: `⚠️ ${language.toUpperCase()} execution is currently unavailable.
+  }
+  
+  // All APIs failed - Show helpful message with working JavaScript alternative
+  let jsHint = '';
+  if (code.includes('print')) {
+    jsHint = code.replace(/print\((.*?)\)/g, 'console.log($1)');
+  } else if (code.includes('System.out.println')) {
+    jsHint = code.replace(/System.out.println\((.*?)\)/g, 'console.log($1)');
+  } else if (code.includes('cout')) {
+    jsHint = code.replace(/cout << (.*?) << /g, 'console.log($1);');
+  } else {
+    jsHint = 'console.log("Hello from PeerSync!");';
+  }
+  
+  res.json({
+    output: `⚠️ ${language.toUpperCase()} execution is temporarily unavailable (API rate limits).
 
-💡 Your code:
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+💻 YOUR ${language.toUpperCase()} CODE:
 ${code}
 
-💡 Why this happens:
-The free Piston API may be rate-limited or temporarily down.
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 
-💡 Quick solutions:
-1️⃣ Use JavaScript in PeerSync (works 100% instantly!)
-2️⃣ Run ${language.toUpperCase()} locally on your computer
-3️⃣ Use online runner: https://replit.com
+✅ QUICK FIX - JAVASCRIPT EQUIVALENT (WORKS NOW!):
+${jsHint}
 
-💡 The code you wrote looks correct. To test it now:
-• Click "AI Summary" - it will analyze your code
-• Or paste the code into an online runner
+💡 HOW TO RUN:
+1. Change language to "JavaScript" in the dropdown
+2. Paste the equivalent code above
+3. Click "Run Code" - It will work instantly!
 
-The execution service will automatically recover when the API becomes available.`
-    });
-  }
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+📝 TO RUN ${language.toUpperCase()} LOCALLY:
+${language === 'python' ? '• python script.py' : language === 'java' ? '• javac Main.java && java Main' : '• g++ main.cpp -o main && ./main'}
+
+🌐 ONLINE RUNNER (FREE):
+• https://replit.com (Best for ${language.toUpperCase()})
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+💡 TIP: JavaScript works 100% in PeerSync with no delays!
+   Convert your logic to JavaScript for instant results.`
+  });
 });
 
 // --- 3. AI SUMMARY (GEMINI 2.5 FLASH) ---
