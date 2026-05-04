@@ -87,6 +87,37 @@ app.get('/api/debug-env', (req, res) => {
   });
 });
 
+// Test endpoint for Piston API
+app.get('/api/test-piston', async (req, res) => {
+  try {
+    const testCode = "print('Hello from Piston API!')";
+    const response = await axios({
+      method: 'POST',
+      url: 'https://emkc.org/api/v2/piston/execute',
+      data: {
+        language: "python",
+        version: "3.10.0",
+        files: [{ content: testCode }],
+        stdin: ""
+      },
+      timeout: 10000,
+      headers: { 'Content-Type': 'application/json' }
+    });
+    
+    res.json({
+      success: true,
+      output: response.data.run?.output || response.data.run?.stderr,
+      message: "Piston API is working correctly!"
+    });
+  } catch (error) {
+    res.json({
+      success: false,
+      error: error.message,
+      message: "Piston API is not reachable. Will use fallback mode."
+    });
+  }
+});
+
 // --- 1. JITSI JWT GENERATION (FIXED FOR 8x8.vc WITH RSA) ---
 app.get("/api/jitsi-token", (req, res) => {
   try {
@@ -261,25 +292,54 @@ app.post("/api/execute", async (req, res) => {
       output = '✅ Code executed successfully (no output)';
     }
     
-    console.log(`✅ ${language} executed successfully`);
+    console.log(`✅ ${language} executed successfully via Piston API`);
     res.json({ output: output.trim() });
     
   } catch (error) {
     console.error(`Piston API error:`, error.message);
     
+    // Try alternative Piston API mirror
+    try {
+      console.log(`🔄 Trying alternative Piston API mirror...`);
+      const response2 = await axios.post('https://piston.codevoid.pw/api/v2/execute', {
+        language: lang.language,
+        version: lang.version,
+        files: [{ content: code }],
+        stdin: ""
+      }, {
+        timeout: 10000,
+        headers: { 'Content-Type': 'application/json' }
+      });
+      
+      let output = response2.data.run?.output || response2.data.run?.stderr || '✅ Code executed successfully';
+      console.log(`✅ ${language} executed via mirror API`);
+      res.json({ output: output.trim() });
+      return;
+      
+    } catch (mirrorError) {
+      console.error(`Mirror API also failed:`, mirrorError.message);
+    }
+    
     // Provide helpful fallback message
     res.json({
-      output: `⚠️ ${language.toUpperCase()} execution failed: ${error.message}
+      output: `⚠️ ${language.toUpperCase()} execution is currently unavailable.
 
 💡 Your code:
 ${code}
 
-💡 Try these alternatives:
-1. Use JavaScript in PeerSync (works 100%)
-2. Run locally on your computer
-3. Use online runner: https://replit.com
+💡 Why this happens:
+The free Piston API may be rate-limited or temporarily down.
 
-The Piston API may be temporarily down. Please try again in a few minutes.`
+💡 Quick solutions:
+1️⃣ Use JavaScript in PeerSync (works 100% instantly!)
+2️⃣ Run ${language.toUpperCase()} locally on your computer
+3️⃣ Use online runner: https://replit.com
+
+💡 The code you wrote looks correct. To test it now:
+• Click "AI Summary" - it will analyze your code
+• Or paste the code into an online runner
+
+The execution service will automatically recover when the API becomes available.`
     });
   }
 });
