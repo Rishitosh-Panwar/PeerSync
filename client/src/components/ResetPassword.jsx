@@ -1,7 +1,7 @@
 // ResetPassword.jsx
 import { useState, useEffect } from 'react';
 import { useNavigate, useLocation, Link } from 'react-router-dom';
-import './Login.css';
+import '../Login.css';  // FIXED: Changed from './Login.css' to '../Login.css'
 
 export default function ResetPassword() {
     const [password, setPassword] = useState('');

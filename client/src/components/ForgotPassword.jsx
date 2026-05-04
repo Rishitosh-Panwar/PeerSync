@@ -1,6 +1,7 @@
+// ForgotPassword.jsx
 import { useState } from 'react';
 import { useNavigate, Link } from 'react-router-dom';
-import './Login.css';
+import '../Login.css';  // FIXED: Changed from './Login.css' to '../Login.css'
 
 export default function ForgotPassword() {
     const [email, setEmail] = useState('');
