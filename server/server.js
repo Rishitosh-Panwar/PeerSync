@@ -27,7 +27,6 @@ const allowedOrigins = [
   "https://peersync-frontend.onrender.com"
 ];
 
-// Allow all required headers including cache-control
 app.use(cors({ 
   origin: function(origin, callback) {
     if (!origin) return callback(null, true);
@@ -52,8 +51,6 @@ app.use(cors({
   preflightContinue: false,
   optionsSuccessStatus: 204
 }));
-
-// NO app.options() line here - it causes errors and is not needed
 
 // --- MongoDB Connection ---
 mongoose.connect(process.env.MONGO_URI)
@@ -122,7 +119,6 @@ app.get("/api/jitsi-token", (req, res) => {
     }
     
     console.log('✅ Private key format validated');
-    console.log('Key starts with:', privateKey.substring(0, 30));
     
     const now = Math.floor(Date.now() / 1000);
     const roomName = req.query.room || "peersyncroom-q1dqbgf";
@@ -131,7 +127,6 @@ app.get("/api/jitsi-token", (req, res) => {
     
     console.log(`🔐 Generating JWT for room: ${roomName}, user: ${userName}`);
     
-    // Create the payload according to Jitsi/8x8 specification
     const payload = {
       aud: "jitsi",
       iss: "chat",
@@ -159,7 +154,6 @@ app.get("/api/jitsi-token", (req, res) => {
       }
     };
     
-    // Sign with RS256 - use privateKey directly (jwt will parse it)
     const token = jwt.sign(payload, privateKey, {
       algorithm: 'RS256',
       keyid: kid
@@ -168,8 +162,6 @@ app.get("/api/jitsi-token", (req, res) => {
     console.log('✅ Jitsi token generated successfully');
     console.log(`   - Algorithm: RS256`);
     console.log(`   - Key ID: ${kid}`);
-    console.log(`   - Expires: ${new Date(payload.exp * 1000).toISOString()}`);
-    console.log(`   - Duration: ${(payload.exp - now) / 3600} hours`);
     
     res.json({ 
       token,
@@ -257,22 +249,20 @@ app.post("/api/execute", async (req, res) => {
     
     let output = response.data.run.output || response.data.run.stderr || '✅ Code executed successfully (no output)';
     
-    // Clean up output
     if (output.length > 5000) {
       output = output.substring(0, 5000) + '\n... (output truncated)';
     }
     
     if (response.data.run.stderr && !response.data.run.output) {
-      output = `❌ Error:\n${response.data.run.stderr}`;
+      output = `❌ ${language.toUpperCase()} Error:\n${response.data.run.stderr}`;
     }
     
-    console.log(`✅ ${language} code executed via Piston`);
+    console.log(`✅ ${language} code executed via Piston API`);
     res.json({ output });
     
   } catch (error) {
     console.error(`Piston API error for ${language}:`, error.message);
     
-    // Fallback to helpful message
     let fallbackMessage = `⚠️ ${language.toUpperCase()} execution temporarily unavailable.\n\n`;
     fallbackMessage += `💡 Your code:\n${code}\n\n`;
     fallbackMessage += `💡 To run ${language.toUpperCase()} locally:\n`;
@@ -303,7 +293,6 @@ app.post("/api/summarize", async (req, res) => {
   2. "logic": Step-by-step breakdown of how the code executes.
   3. "approach": The algorithm, pattern, or data structures used.
   4. "flashcards": Provide exactly 5 to 10 technical Q&A pairs. 
-     - Focus on: The specific language syntax used, the logic of the code, and general computer science concepts related to this snippet.
      - Format: An array of objects with { "q": "Question", "a": "Answer" }.
 
   Code: ${code}
@@ -323,7 +312,6 @@ app.post("/api/summarize", async (req, res) => {
     const cleanJsonString = responseText.replace(/```json|```/g, "").trim();
     const data = JSON.parse(cleanJsonString);
 
-    // Save to DB
     await SessionLog.findOneAndUpdate(
       { roomId },
       { 
@@ -381,7 +369,6 @@ const starterCode = {
 };
 
 io.on("connection", (socket) => {
-  // 1. JOIN ROOM & INITIAL SYNC
   socket.on("join_room", ({ roomId, userName }) => {
     socket.join(roomId);
     
@@ -401,7 +388,6 @@ io.on("connection", (socket) => {
     });
   });
 
-  // Request driver info
   socket.on("request_driver_info", ({ roomId }) => {
     if (activeRooms[roomId]) {
       socket.emit("driver_changed", {
@@ -411,7 +397,6 @@ io.on("connection", (socket) => {
     }
   });
 
-  // 2. CLAIM DRIVER
   socket.on("claim_driver", ({ roomId, name }) => {
     if (activeRooms[roomId]) {
       activeRooms[roomId].driver = socket.id;
@@ -430,16 +415,11 @@ io.on("connection", (socket) => {
     }
   });
 
-  // 3. CAPTION BROADCASTING WITH DYNAMIC TRANSLATION
   socket.on("send_caption", async ({ roomId, text }) => {
     try {
-      const translations = {
-        en: text
-      };
-      
+      const translations = { en: text };
       const hindiText = await translateText(text, 'hi');
       translations.hi = hindiText;
-      
       io.to(roomId).emit("receive_caption", translations);
     } catch (error) {
       console.error("Caption broadcast error:", error);
@@ -447,7 +427,6 @@ io.on("connection", (socket) => {
     }
   });
 
-  // 4. CODE & DATA SYNC
   socket.on("code_update", ({ roomId, code }) => {
     if (activeRooms[roomId]?.driver === socket.id) {
       activeRooms[roomId].code = code;
