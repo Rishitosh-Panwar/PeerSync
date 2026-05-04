@@ -113,15 +113,13 @@ const BACKEND_URL = import.meta.env.VITE_BACKEND_URL || "https://peersync-backen
 console.log('🔗 Connecting to backend at:', BACKEND_URL);
 console.log('📦 App Version: 4.0.0');
 
-// Create axios instance with better error handling and cache prevention
+// Create axios instance with better error handling - NO CACHE HEADERS to avoid CORS
 const api = axios.create({
   baseURL: BACKEND_URL,
   headers: {
     "Bypass-Tunnel-Reminder": "true",
-    "Content-Type": "application/json",
-    "Cache-Control": "no-cache, no-store, must-revalidate",
-    "Pragma": "no-cache",
-    "Expires": "0"
+    "Content-Type": "application/json"
+    // REMOVED: Cache-Control, Pragma, Expires - these cause CORS errors
   },
   withCredentials: true,
   timeout: 15000
@@ -203,14 +201,15 @@ export default function App() {
         }
     };
 
-    // Enhanced auth check with token refresh
+    // Enhanced auth check with token refresh - prevent infinite redirects
     useEffect(() => {
+        let isMounted = true;
         const checkAuth = async () => {
             const token = localStorage.getItem('token');
             const refreshToken = localStorage.getItem('refreshToken');
             
             if (!token) {
-                navigate('/login');
+                if (isMounted) navigate('/login');
                 return;
             }
             
@@ -219,15 +218,25 @@ export default function App() {
                     headers: { Authorization: `Bearer ${token}` }
                 });
                 
-                if (res.data) {
+                if (res.data && isMounted) {
                     localStorage.setItem('userName', res.data.username);
                     console.log('Authenticated as:', res.data.username);
                 }
             } catch (error) {
+                console.error('Auth check failed:', error.message);
+                
+                // Don't redirect on CORS errors - just keep trying
+                if (error.message === 'Network Error' && error.code === 'ERR_NETWORK') {
+                    console.log('Network/CORS error, retrying in 2 seconds...');
+                    setTimeout(checkAuth, 2000);
+                    return;
+                }
+                
+                // Only try refresh if we have a refresh token
                 if (refreshToken) {
                     try {
                         const refreshRes = await api.post('/api/auth/refresh-token', { refreshToken });
-                        if (refreshRes.data.token) {
+                        if (refreshRes.data.token && isMounted) {
                             localStorage.setItem('token', refreshRes.data.token);
                             console.log('Token refreshed successfully');
                             return;
@@ -237,13 +246,20 @@ export default function App() {
                     }
                 }
                 
-                localStorage.removeItem('token');
-                localStorage.removeItem('refreshToken');
-                navigate('/login');
+                // Only redirect to login if not a network error
+                if (isMounted && error.message !== 'Network Error') {
+                    localStorage.removeItem('token');
+                    localStorage.removeItem('refreshToken');
+                    navigate('/login');
+                }
             }
         };
         
         checkAuth();
+        
+        return () => {
+            isMounted = false;
+        };
     }, [navigate]);
 
     // Monitor socket connection

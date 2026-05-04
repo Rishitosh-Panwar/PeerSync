@@ -19,12 +19,42 @@ const authRoutes = require('./routes/auth');
 
 app.use(express.json());
 
-// FIXED CORS: Added strict matching for Vite ports
+// --- CORS Configuration (FIXED - Allows all required headers) ---
+const allowedOrigins = [
+  "http://localhost:5173", 
+  "http://localhost:5174", 
+  "https://fugal-nonsophistically-charis.ngrok-free.dev", 
+  "https://peersync-frontend.onrender.com"
+];
+
+// Allow all required headers including cache-control
 app.use(cors({ 
-  origin: ["http://localhost:5173", "http://localhost:5174", "https://fugal-nonsophistically-charis.ngrok-free.dev", "https://peersync-frontend.onrender.com"], 
+  origin: function(origin, callback) {
+    if (!origin) return callback(null, true);
+    if (allowedOrigins.indexOf(origin) !== -1) {
+      return callback(null, true);
+    } else {
+      return callback(null, false);
+    }
+  },
   credentials: true,
-  allowedHeaders: ["Content-Type", "Authorization", "Bypass-Tunnel-Reminder"]
+  allowedHeaders: [
+    "Content-Type", 
+    "Authorization", 
+    "Bypass-Tunnel-Reminder",
+    "Cache-Control",
+    "Pragma", 
+    "Expires",
+    "X-Requested-With"
+  ],
+  exposedHeaders: ["Authorization", "Content-Type"],
+  methods: ["GET", "POST", "PUT", "DELETE", "OPTIONS"],
+  preflightContinue: false,
+  optionsSuccessStatus: 204
 }));
+
+// Handle preflight requests explicitly
+app.options('*', cors());
 
 // --- MongoDB Connection ---
 mongoose.connect(process.env.MONGO_URI)
@@ -262,7 +292,7 @@ const io = new Server(server, {
   cors: { 
     origin: "*",
     methods: ["GET", "POST"],
-    allowedHeaders: ["Bypass-Tunnel-Reminder"],
+    allowedHeaders: ["Bypass-Tunnel-Reminder", "Content-Type", "Authorization", "Cache-Control"],
     credentials: true
   } 
 });
