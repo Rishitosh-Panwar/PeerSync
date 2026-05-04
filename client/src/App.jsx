@@ -1,11 +1,16 @@
 // Add at the very top of App.jsx, before any imports
-// CACHE CLEARER VERSION 3.0
+// CACHE CLEARER VERSION 4.0 - AUTOMATIC ON DEPLOYMENT
 const clearOldCache = () => {
-    const version = '3.0.0';
+    // Use build timestamp or deployment version
+    const deploymentVersion = '4.0.0';
+    const buildTime = '2026-05-04'; // Update this on each deployment
     const storedVersion = localStorage.getItem('app_version');
+    const storedBuildTime = localStorage.getItem('app_build_time');
     
-    if (storedVersion !== version) {
-        console.log('🔄 Clearing old cache... New version:', version);
+    // Force clear if version mismatch OR if build time is different
+    if (storedVersion !== deploymentVersion || storedBuildTime !== buildTime) {
+        console.log('🔄 Deployment detected! Clearing all cached data...');
+        console.log(`   Old version: ${storedVersion}, New version: ${deploymentVersion}`);
         
         // Clear all localStorage
         localStorage.clear();
@@ -18,15 +23,80 @@ const clearOldCache = () => {
             document.cookie = c.replace(/^ +/, "").replace(/=.*/, "=;expires=" + new Date().toUTCString() + ";path=/"); 
         });
         
-        // Set new version
-        localStorage.setItem('app_version', version);
+        // Clear IndexedDB (Jitsi cache)
+        if (window.indexedDB) {
+            const databases = ['JitsiMeet', 'JitsiData', '8x8', 'jitsi', 'JitsiMeetExternalAPI'];
+            databases.forEach(dbName => {
+                try {
+                    const request = window.indexedDB.deleteDatabase(dbName);
+                    request.onsuccess = () => console.log(`  Deleted IndexedDB: ${dbName}`);
+                    request.onerror = () => console.log(`  Could not delete: ${dbName}`);
+                } catch(e) {
+                    console.log(`  Error deleting ${dbName}:`, e.message);
+                }
+            });
+        }
         
-        console.log('✅ Cache cleared!');
+        // Clear Service Worker caches
+        if ('caches' in window) {
+            caches.keys().then(names => {
+                names.forEach(name => {
+                    if (name.includes('jitsi') || name.includes('8x8') || name.includes('meet')) {
+                        caches.delete(name);
+                        console.log(`  Deleted cache: ${name}`);
+                    }
+                });
+            });
+        }
+        
+        // Set new version markers
+        localStorage.setItem('app_version', deploymentVersion);
+        localStorage.setItem('app_build_time', buildTime);
+        
+        console.log('✅ Cache cleared for new deployment!');
+        
+        // Force reload to ensure clean state
+        setTimeout(() => {
+            window.location.reload();
+        }, 100);
+    } else {
+        console.log('✅ Cache is up to date for version:', deploymentVersion);
     }
 };
 
-// Run cache cleaner
+// Force clear Jitsi-specific caches on every load (aggressive)
+const forceClearJitsiCache = () => {
+    console.log('🧹 Force clearing Jitsi-specific caches...');
+    
+    // Clear all Jitsi-related storage keys
+    const jitsiKeys = [
+        'jitsiToken', 'jwt', 'jitsiJWT', 'jitsi-jwt', 'JitsiToken', 
+        'JWT_TOKEN', 'jitsi_config_cache', 'jitsiMeetConfig', 
+        'jitsiParticipant', '8x8_auth', 'vpaas-cookie'
+    ];
+    
+    jitsiKeys.forEach(key => {
+        localStorage.removeItem(key);
+        sessionStorage.removeItem(key);
+    });
+    
+    // Clear any keys containing these strings
+    const clearPatterns = ['jitsi', '8x8', 'meet', 'jwt', 'token', 'vpaas'];
+    [localStorage, sessionStorage].forEach(storage => {
+        const keys = Object.keys(storage);
+        keys.forEach(key => {
+            const lowerKey = key.toLowerCase();
+            if (clearPatterns.some(pattern => lowerKey.includes(pattern))) {
+                storage.removeItem(key);
+                console.log(`  Removed: ${key}`);
+            }
+        });
+    });
+};
+
+// Run cache cleaners
 clearOldCache();
+forceClearJitsiCache();
 
 import { useEffect, useRef, useState } from 'react';
 import { io } from 'socket.io-client';
@@ -41,13 +111,17 @@ import './App.css';
 const BACKEND_URL = import.meta.env.VITE_BACKEND_URL || "https://peersync-backend.onrender.com";
 
 console.log('🔗 Connecting to backend at:', BACKEND_URL);
+console.log('📦 App Version: 4.0.0');
 
-// Create axios instance with better error handling
+// Create axios instance with better error handling and cache prevention
 const api = axios.create({
   baseURL: BACKEND_URL,
   headers: {
     "Bypass-Tunnel-Reminder": "true",
-    "Content-Type": "application/json"
+    "Content-Type": "application/json",
+    "Cache-Control": "no-cache, no-store, must-revalidate",
+    "Pragma": "no-cache",
+    "Expires": "0"
   },
   withCredentials: true,
   timeout: 15000
@@ -99,6 +173,7 @@ export default function App() {
     const [jitsiActive, setJitsiActive] = useState(false);
     const [jitsiError, setJitsiError] = useState(false);
     const [tokenExpiry, setTokenExpiry] = useState(null);
+    const [tokenDebug, setTokenDebug] = useState(null);
 
     const [showAIOverlay, setShowAIOverlay] = useState(false);
     const [aiData, setAiData] = useState(null);
@@ -110,15 +185,21 @@ export default function App() {
     const [connectionStatus, setConnectionStatus] = useState('connecting');
     const [transportType, setTransportType] = useState('unknown');
 
-    // Add this function for hard reset
+    // Hard reset function
     const hardReset = () => {
-        if (confirm('This will clear all data and log you out. Continue?')) {
+        if (confirm('This will clear all data and reset the app. Continue?')) {
+            forceClearJitsiCache();
             localStorage.clear();
             sessionStorage.clear();
             document.cookie.split(";").forEach(function(c) { 
                 document.cookie = c.replace(/^ +/, "").replace(/=.*/, "=;expires=" + new Date().toUTCString() + ";path=/"); 
             });
-            window.location.href = '/login';
+            if ('caches' in window) {
+                caches.keys().then(names => {
+                    names.forEach(name => caches.delete(name));
+                });
+            }
+            window.location.reload();
         }
     };
 
@@ -133,19 +214,16 @@ export default function App() {
                 return;
             }
             
-            // Verify token is still valid
             try {
                 const res = await api.get('/api/auth/me', {
                     headers: { Authorization: `Bearer ${token}` }
                 });
                 
                 if (res.data) {
-                    // Token is valid, update user info
                     localStorage.setItem('userName', res.data.username);
                     console.log('Authenticated as:', res.data.username);
                 }
             } catch (error) {
-                // Token expired, try to refresh
                 if (refreshToken) {
                     try {
                         const refreshRes = await api.post('/api/auth/refresh-token', { refreshToken });
@@ -159,7 +237,6 @@ export default function App() {
                     }
                 }
                 
-                // No valid token, redirect to login
                 localStorage.removeItem('token');
                 localStorage.removeItem('refreshToken');
                 navigate('/login');
@@ -186,7 +263,6 @@ export default function App() {
             setConnectionStatus('error');
             addNotification('error', 'Connection failed - retrying...');
             
-            // Try switching transport
             if (socket.io.engine.transport.name === 'websocket') {
                 console.log('Switching to polling transport...');
                 socket.io.opts.transports = ['polling', 'websocket'];
@@ -218,47 +294,84 @@ export default function App() {
         };
     }, []);
 
-    // Fetch Jitsi token with user info and room
+    // Fetch Jitsi token with aggressive cache busting
     const getJitsiToken = async () => {
         try {
-            console.log('Fetching Jitsi token for room:', roomId);
+            // Clear any cached token first
+            sessionStorage.removeItem('jitsiToken');
+            localStorage.removeItem('jitsiToken');
+            
+            console.log('🔄 Fetching FRESH Jitsi token for room:', roomId);
             const userName = localStorage.getItem('userName') || "PeerSync User";
             const userId = localStorage.getItem('userId') || "peersync-user-1";
+            
+            // Multiple cache-busting parameters
+            const timestamp = Date.now();
+            const random = Math.random().toString(36).substring(7);
             
             const res = await api.get('/api/jitsi-token', {
                 params: {
                     room: roomId,
                     userName: userName,
-                    userId: userId
+                    userId: userId,
+                    _t: timestamp,
+                    _r: random,
+                    _nocache: timestamp
                 }
             });
             
-            console.log('✅ Jitsi token received');
-            console.log('Token expires at:', new Date(res.data.expiresAt * 1000).toLocaleString());
+            const receivedToken = res.data.token;
             
-            setJitsiToken(res.data.token);
+            // Decode and verify token
+            try {
+                const tokenParts = receivedToken.split('.');
+                if (tokenParts.length === 3) {
+                    const header = JSON.parse(atob(tokenParts[0]));
+                    console.log('📋 Token Header:', header);
+                    console.log('🔑 Algorithm:', header.alg);
+                    console.log('🔐 Has kid:', !!header.kid);
+                    
+                    setTokenDebug({
+                        algorithm: header.alg,
+                        hasKid: !!header.kid,
+                        kid: header.kid || 'MISSING'
+                    });
+                    
+                    if (header.alg !== 'RS256') {
+                        console.error('❌ Wrong algorithm! Expected RS256, got:', header.alg);
+                        addNotification('error', `Wrong token algorithm: ${header.alg}`);
+                        setJitsiError(true);
+                        return;
+                    }
+                    
+                    if (!header.kid) {
+                        console.error('❌ Missing kid in token header!');
+                        addNotification('error', 'Missing Key ID in token');
+                        setJitsiError(true);
+                        return;
+                    }
+                    
+                    console.log('✅ Token validation passed! Using RS256 with kid');
+                    addNotification('success', `Video auth: RS256`);
+                }
+            } catch (decodeError) {
+                console.error('Failed to decode token:', decodeError);
+            }
+            
+            setJitsiToken(receivedToken);
             setTokenExpiry(res.data.expiresAt);
             
-            // Setup auto-refresh - refresh 30 minutes before expiry
-            const now = Math.floor(Date.now() / 1000);
-            const refreshIn = (res.data.expiresAt - now - 1800) * 1000; // 30 minutes before
-            
-            if (refreshIn > 0) {
-                setTimeout(() => {
-                    console.log('🔄 Refreshing Jitsi token...');
-                    getJitsiToken();
-                }, refreshIn);
+            // Refresh Jitsi if already initialized
+            if (jitsiApiRef.current) {
+                console.log('Re-initializing Jitsi with new token...');
+                jitsiApiRef.current.dispose();
+                jitsiApiRef.current = null;
+                setTimeout(() => initJitsi(), 500);
             }
             
         } catch (err) {
             console.error("❌ JWT Fetch Failed:", err.message);
-            if (err.code === 'ECONNABORTED') {
-                addNotification('error', 'Request timeout - check backend');
-            } else if (err.response?.status === 500) {
-                addNotification('error', 'Server error - check backend logs');
-            } else {
-                addNotification('error', 'Failed to initialize video call');
-            }
+            addNotification('error', 'Failed to initialize video call');
             setJitsiError(true);
         }
     };
@@ -334,16 +447,14 @@ export default function App() {
             try {
                 setJitsiActive(true);
                 const domain = "8x8.vc";
-                
-                // Use consistent room name format
-                const roomName = roomId; // Use roomId directly or prefix if needed
+                const roomName = roomId;
                 
                 console.log('🎥 Initializing Jitsi with room:', roomName);
-                console.log('🔑 Token length:', jitsiToken.length);
+                console.log('🔑 Token algorithm verification passed');
                 
                 const options = {
                     roomName: roomName,
-                    jwt: jitsiToken,  // RS256 token with kid
+                    jwt: jitsiToken,
                     width: "100%", 
                     height: "100%",
                     parentNode: jitsiContainerRef.current,
@@ -353,8 +464,7 @@ export default function App() {
                         startWithVideoMuted: false,
                         disableDeepLinking: true,
                         enableWelcomePage: false,
-                        // For 5-hour call stability
-                        channelLastN: 4, // Limit video streams for stability
+                        channelLastN: 4,
                         disabledSounds: [],
                         defaultLanguage: 'en',
                         disableInviteFunctions: true,
@@ -362,19 +472,11 @@ export default function App() {
                         enableCalendarIntegration: false,
                         enableEmailIntegration: false,
                         enableGoogleAPIs: false,
-                        // Keep connection alive
-                        p2p: {
-                            enabled: false // Disable P2P for better stability
-                        },
-                        // Connection quality settings
+                        p2p: { enabled: false },
                         resolution: 720,
                         constraints: {
                             video: {
-                                height: {
-                                    ideal: 720,
-                                    max: 720,
-                                    min: 180
-                                }
+                                height: { ideal: 720, max: 720, min: 180 }
                             }
                         }
                     },
@@ -394,7 +496,6 @@ export default function App() {
 
                 jitsiApiRef.current = new window.JitsiMeetExternalAPI(domain, options);
                 
-                // Add event listeners
                 jitsiApiRef.current.addListener('videoConferenceJoined', () => {
                     console.log('✅ Jitsi conference joined successfully');
                     addNotification('success', 'Video call connected');
@@ -427,7 +528,6 @@ export default function App() {
             }
         } else if (!window.JitsiMeetExternalAPI) {
             console.log('Waiting for Jitsi API to load...');
-            // Retry after a delay if API not loaded
             setTimeout(() => {
                 if (jitsiToken && !jitsiApiRef.current) {
                     console.log('Retrying Jitsi initialization...');
@@ -446,7 +546,6 @@ export default function App() {
         keepAliveIntervalRef.current = setInterval(() => {
             if (jitsiApiRef.current && jitsiActive) {
                 try {
-                    // Simple operation to keep connection alive
                     jitsiApiRef.current.executeCommand('toggleTileView');
                     setTimeout(() => {
                         if (jitsiApiRef.current) {
@@ -459,18 +558,16 @@ export default function App() {
                 }
             }
             
-            // Also check socket connection
             if (!socket.connected) {
                 console.log('Reconnecting socket...');
                 socket.connect();
             }
-        }, 25 * 60 * 1000); // Every 25 minutes
+        }, 25 * 60 * 1000);
     };
 
     // Room and socket setup
     useEffect(() => {
         if (jitsiToken && roomId && socket.connected) {
-            // Load Jitsi script if not already loaded
             if (!window.JitsiMeetExternalAPI) {
                 const script = document.createElement('script');
                 script.src = 'https://8x8.vc/vpaas-magic-cookie-8f291ebf52794eb5896baaed63b01738/external_api.js';
@@ -491,16 +588,13 @@ export default function App() {
                 startKeepAlive();
             }
             
-            // Join room via socket
             const myName = localStorage.getItem('userName') || "User_" + Math.floor(Math.random() * 1000);
             socket.emit('join_room', { roomId, userName: myName });
             
-            // Request driver info
             setTimeout(() => {
                 socket.emit('request_driver_info', { roomId });
             }, 500);
 
-            // Socket listeners
             const onInitialCode = (savedCode) => {
                 setCode(savedCode);
                 console.log('Initial code loaded');
@@ -574,7 +668,6 @@ export default function App() {
         }
     }, [roomId, jitsiToken, socket.connected]);
 
-    // Add notification helper
     const addNotification = (type, message) => {
         const id = Date.now();
         setNotifications(prev => [...prev, { id, type, message }]);
@@ -634,7 +727,6 @@ export default function App() {
 
     const handleLayoutToggle = () => {
         setIsVideoMaximized(!isVideoMaximized);
-        // Also trigger Jitsi layout update
         setTimeout(() => {
             if (jitsiApiRef.current) {
                 jitsiApiRef.current.executeCommand('toggleTileView');
@@ -682,6 +774,31 @@ export default function App() {
         addNotification('success', 'PDF downloaded');
     };
 
+    // Debug token function
+    const debugToken = async () => {
+        console.log('🔍 Debugging token...');
+        try {
+            const freshToken = await api.get('/api/jitsi-token', {
+                params: {
+                    room: roomId,
+                    userName: localStorage.getItem('userName') || "Test",
+                    userId: "debug-user",
+                    _debug: Date.now()
+                }
+            });
+            
+            const token = freshToken.data.token;
+            const parts = token.split('.');
+            const header = JSON.parse(atob(parts[0]));
+            
+            const message = `Token Info:\nAlgorithm: ${header.alg}\nHas KID: ${!!header.kid}\nKID: ${header.kid || 'MISSING!'}\n\n${header.alg === 'RS256' && header.kid ? '✅ Token looks correct!' : '❌ Token is WRONG!'}`;
+            alert(message);
+            console.log('Debug token header:', header);
+        } catch(e) {
+            alert('Error fetching token: ' + e.message);
+        }
+    };
+
     // Connection error screen
     if (connectionStatus === 'error' && !socket.connected) {
         return (
@@ -703,7 +820,6 @@ export default function App() {
 
     return (
         <div className="app-container">
-            {/* Connection Status Bar */}
             <div className="status-bar">
                 <div className={`connection-status ${connectionStatus}`}>
                     {connectionStatus === 'connected' && `🟢 Connected (${transportType})`}
@@ -719,9 +835,13 @@ export default function App() {
                         🔑 Expires: {new Date(tokenExpiry * 1000).toLocaleTimeString()}
                     </div>
                 )}
+                {tokenDebug && (
+                    <div className="token-debug" style={{fontSize: '10px', marginLeft: '10px'}}>
+                        {tokenDebug.algorithm === 'RS256' ? '✅' : '❌'} {tokenDebug.algorithm}
+                    </div>
+                )}
             </div>
 
-            {/* Notifications */}
             <div className="notification-container">
                 {notifications.map(notif => (
                     <div key={notif.id} className={`notification ${notif.type}`}>
@@ -730,7 +850,6 @@ export default function App() {
                 ))}
             </div>
 
-            {/* Rest of your UI remains the same */}
             <div className="main-workspace">
                 <div className="toolbar">
                     <div className="logo-text">PeerSync</div>
@@ -785,6 +904,10 @@ export default function App() {
                     >
                         <span className="button-icon">🤖</span>
                         <span>{isGenerating ? "Analyzing..." : "AI Summary"}</span>
+                    </button>
+                    
+                    <button onClick={debugToken} className="debug-button" title="Debug Token">
+                        🔍 Debug
                     </button>
                     
                     <button onClick={hardReset} className="reset-button" title="Clear all data and reset">
