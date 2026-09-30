@@ -1071,7 +1071,7 @@ export default function App() {
                                 <span className="driver-name">{driverName}</span>
                             </span>
                         </div>
-                    </div>
+                    )}
                 </div>
 
                 <Editor
