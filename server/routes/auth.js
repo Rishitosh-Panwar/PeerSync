@@ -48,7 +48,7 @@ router.post('/register-password', async (req, res) => {
         // Generate JWT token
         const token = jwt.sign(
             { id: newUser._id, email: newUser.email, username: newUser.username }, 
-            process.env.JWT_SECRET || 'your_super_secret_key_change_this',
+            process.env.JWT_SECRET,
             { expiresIn: '7d' }
         );
         
@@ -111,7 +111,7 @@ router.post('/login-password', async (req, res) => {
         // Generate JWT token
         const token = jwt.sign(
             { id: user._id, email: user.email, username: user.username }, 
-            process.env.JWT_SECRET || 'your_super_secret_key_change_this',
+            process.env.JWT_SECRET,
             { expiresIn: '7d' }
         );
         
@@ -298,7 +298,7 @@ router.get('/auth/callback', async (req, res) => {
             // Generate JWT token for auto-login
             const jwtToken = jwt.sign(
                 { id: user._id, email: user.email, username: user.username }, 
-                process.env.JWT_SECRET || 'your_super_secret_key_change_this',
+                process.env.JWT_SECRET,
                 { expiresIn: '7d' }
             );
             
@@ -442,7 +442,7 @@ router.post('/verify-token', async (req, res) => {
             return res.status(401).json({ valid: false, message: 'No token provided' });
         }
         
-        const decoded = jwt.verify(token, process.env.JWT_SECRET || 'your_super_secret_key_change_this');
+        const decoded = jwt.verify(token, process.env.JWT_SECRET);
         const user = await User.findById(decoded.id).select('-passwordHash -refreshToken');
         
         if (!user) {
@@ -478,7 +478,7 @@ router.post('/get-login-token', async (req, res) => {
         // Generate JWT token
         const jwtToken = jwt.sign(
             { id: user._id, email: user.email, username: user.username }, 
-            process.env.JWT_SECRET || 'your_super_secret_key_change_this',
+            process.env.JWT_SECRET,
             { expiresIn: '7d' }
         );
         
@@ -526,7 +526,7 @@ const verifyToken = (req, res, next) => {
     if (!token) return res.status(401).json({ message: 'Access denied' });
     
     try {
-        const verified = jwt.verify(token, process.env.JWT_SECRET || 'your_super_secret_key_change_this');
+        const verified = jwt.verify(token, process.env.JWT_SECRET);
         req.user = verified;
         next();
     } catch (error) {
