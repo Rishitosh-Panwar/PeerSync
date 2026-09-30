@@ -142,8 +142,8 @@ app.get("/api/jitsi-token", authenticateRequest, (req, res) => {
           email: `${userId}@peersync.local`,
           id: userId,
           avatar: "",
-          moderator: true,
-          affiliation: "owner"
+          moderator: false,
+          affiliation: "member"
         },
         features: {
           recording: false,
@@ -187,7 +187,12 @@ app.post("/api/execute", authenticateRequest, async (req, res) => {
   console.log(`📝 Executing ${language} code...`);
   
   // User code is never executed inside this API process.\n  // All supported languages are delegated to the external Judge0 sandbox.\n\n  // Language IDs for free Judge0 CE endpoint
+  if (typeof code !== "string" || code.length > 200000) {
+    return res.status(400).json({ error: "Code is missing or exceeds the 200 KB limit." });
+  }
+
   const languageMap = {
+    javascript: { id: 63, name: 'javascript' },
     python: { id: 71, name: 'python' },
     java: { id: 62, name: 'java' },
     cpp: { id: 54, name: 'cpp' }
@@ -360,33 +365,6 @@ app.post("/api/summarize", authenticateRequest, async (req, res) => {
     console.error("❌ AI Generation Failed:", error.message);
     res.status(500).json({ error: "AI Failed", details: error.message });
   }
-});
-
-// Check API status endpoint
-app.get('/api/api-status', async (req, res) => {
-  const results = [];
-  
-  const testAPIs = [
-    { name: 'Piston API', url: 'https://emkc.org/api/v2/piston/execute', method: 'POST' },
-    { name: 'CodeX API', url: 'https://api.codex.jaagrav.in/execute', method: 'POST' },
-    { name: 'GDebug API', url: 'https://gdb.gdplabs.com/api/run', method: 'POST' }
-  ];
-  
-  for (const api of testAPIs) {
-    try {
-      const start = Date.now();
-      await axios.post(api.url, { test: true }, { timeout: 5000 });
-      results.push({ name: api.name, status: 'online', latency: Date.now() - start });
-    } catch (err) {
-      results.push({ name: api.name, status: 'offline', error: err.message });
-    }
-  }
-  
-  res.json({
-    timestamp: new Date().toISOString(),
-    results: results,
-    recommendation: 'JavaScript execution always works. For other languages, use the JavaScript conversion or run locally.'
-  });
 });
 
 // --- 4. SOCKET.IO ---
