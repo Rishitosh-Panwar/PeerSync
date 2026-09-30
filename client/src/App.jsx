@@ -132,12 +132,20 @@ const socket = io(BACKEND_URL, {
     reconnectionDelay: 1000,
     reconnectionDelayMax: 5000,
     timeout: 20000,
-    autoConnect: true,
+    autoConnect: false,
     forceNew: true,
     extraHeaders: {
         "Bypass-Tunnel-Reminder": "true"
+    },
+    auth: {
+        token: localStorage.getItem('token')
     }
 });
+
+const connectAuthenticatedSocket = () => {
+    socket.auth = { token: localStorage.getItem('token') };
+    if (!socket.connected) socket.connect();
+};
 
 const starterCode = {
     python: "def main():\n    print('Hello from PeerSync Python!')\n\nif __name__ == '__main__':\n    main()",
@@ -278,7 +286,8 @@ export default function App() {
 
     // Monitor socket connection
     useEffect(() => {
-        console.log('Setting up socket connection...');
+        console.log('Setting up authenticated socket connection...');
+        connectAuthenticatedSocket();
         
         const onConnect = () => {
             const transport = socket.io.engine.transport.name;
@@ -331,22 +340,7 @@ export default function App() {
             localStorage.removeItem('jitsiToken');
             
             console.log('🔄 Fetching FRESH Jitsi token for room:', roomId);
-            const userName = localStorage.getItem('userName') || "PeerSync User";
-            const userId = localStorage.getItem('userId') || "peersync-user-1";
-            
-            const timestamp = Date.now();
-            const random = Math.random().toString(36).substring(7);
-            
-            const res = await api.get('/api/jitsi-token', {
-                params: {
-                    room: roomId,
-                    userName: userName,
-                    userId: userId,
-                    _t: timestamp,
-                    _r: random,
-                    _nocache: timestamp
-                }
-            });
+            const res = await api.get('/api/jitsi-token');
             
             const receivedToken = res.data.token;
             
@@ -852,11 +846,15 @@ export default function App() {
     };
 
     const requestToDrive = () => {
-        const name = prompt("Enter your name:", localStorage.getItem('userName') || "PeerSync Coder");
-        if (name && socket.connected) {
-            localStorage.setItem('userName', name);
-            socket.emit("claim_driver", { roomId, name });
-            addNotification('info', `Requested to become driver as ${name}`);
+        if (socket.connected) {
+            socket.emit("claim_driver", { roomId });
+            addNotification('info', 'Requested driver control');
+        }
+    };
+
+    const releaseDriver = () => {
+        if (socket.connected) {
+            socket.emit("release_driver", { roomId });
         }
     };
 
@@ -1051,6 +1049,12 @@ export default function App() {
                             <span>Request Control</span>
                         </button>
                     ) : (
+                        <button onClick={releaseDriver} className="request-button" disabled={!socket.connected}>
+                            <span className="button-icon">🔓</span>
+                            <span>Release Control</span>
+                        </button>
+                    )}
+                    {isDriver && (
                         <div className="driver-badge">
                             <span className="driver-icon">👑</span>
                             <span className="driver-text">
@@ -1058,7 +1062,7 @@ export default function App() {
                                 <span className="driver-name">{driverName}</span>
                             </span>
                         </div>
-                    )}
+                    </div>
                 </div>
 
                 <Editor
