@@ -17,14 +17,33 @@ const server = http.createServer(app);
 // Import auth routes
 const authRoutes = require('./routes/auth');
 
-app.use(express.json());
+const JWT_SECRET = process.env.JWT_SECRET;
+if (!JWT_SECRET) {
+  console.error("❌ JWT_SECRET is required.");
+  if (process.env.NODE_ENV === "production") process.exit(1);
+}
+const getJwtSecret = () => JWT_SECRET || "development-only-secret-change-me";
+const verifyAccessToken = (token) => {
+  if (!token) throw new Error("Missing access token");
+  return jwt.verify(token, getJwtSecret());
+};
+const authenticateRequest = (req, res, next) => {
+  const token = req.header("Authorization")?.replace(/^Bearer\s+/i, "");
+  try {
+    req.user = verifyAccessToken(token);
+    next();
+  } catch {
+    return res.status(401).json({ message: "Authentication required" });
+  }
+};
+app.use(express.json({ limit: "1mb" }));
 
 // --- CORS Configuration (FIXED - Allows all required headers) ---
 const allowedOrigins = [
-  "http://localhost:5173", 
-  "http://localhost:5174", 
-  "https://fugal-nonsophistically-charis.ngrok-free.dev", 
-  "https://peersync-frontend.onrender.com"
+  "http://localhost:5173",
+  "http://localhost:5174",
+  "https://peersync-frontend.onrender.com",
+  ...(process.env.FRONTEND_URL ? [process.env.FRONTEND_URL.replace(/\/$/, "")] : [])
 ];
 
 app.use(cors({ 
@@ -69,57 +88,8 @@ app.get('/api/health', (req, res) => {
   });
 });
 
-// Debug endpoint to check environment variables
-app.get('/api/debug-env', (req, res) => {
-  const rawKey = process.env.JITSI_PRIVATE_KEY;
-  const fixedKey = rawKey?.replace(/\\n/g, '\n');
-  
-  res.json({
-    hasAppId: !!process.env.JITSI_APP_ID,
-    hasKid: !!process.env.JITSI_KID,
-    hasPrivateKey: !!rawKey,
-    rawKeyLength: rawKey?.length,
-    rawKeyStart: rawKey?.substring(0, 50),
-    hasBackslashN: rawKey?.includes('\\n'),
-    fixedKeyStart: fixedKey?.substring(0, 50),
-    hasPEMStart: fixedKey?.includes('-----BEGIN PRIVATE KEY-----'),
-    hasPEMEnd: fixedKey?.includes('-----END PRIVATE KEY-----')
-  });
-});
-
-// Test endpoint for Piston API
-app.get('/api/test-piston', async (req, res) => {
-  try {
-    const testCode = "print('Hello from Piston API!')";
-    const response = await axios({
-      method: 'POST',
-      url: 'https://emkc.org/api/v2/piston/execute',
-      data: {
-        language: "python",
-        version: "3.10.0",
-        files: [{ content: testCode }],
-        stdin: ""
-      },
-      timeout: 10000,
-      headers: { 'Content-Type': 'application/json' }
-    });
-    
-    res.json({
-      success: true,
-      output: response.data.run?.output || response.data.run?.stderr,
-      message: "Piston API is working correctly!"
-    });
-  } catch (error) {
-    res.json({
-      success: false,
-      error: error.message,
-      message: "Piston API is not reachable. Will use fallback mode."
-    });
-  }
-});
-
 // --- 1. JITSI JWT GENERATION (FIXED FOR 8x8.vc WITH RSA) ---
-app.get("/api/jitsi-token", (req, res) => {
+app.get("/api/jitsi-token", authenticateRequest, (req, res) => {
   try {
     const appId = process.env.JITSI_APP_ID;
     const kid = process.env.JITSI_KID;
@@ -153,8 +123,8 @@ app.get("/api/jitsi-token", (req, res) => {
     
     const now = Math.floor(Date.now() / 1000);
     const roomName = req.query.room || "peersyncroom-q1dqbgf";
-    const userName = req.query.userName || "PeerSync User";
-    const userId = req.query.userId || "peersync-user-1";
+    const userName = req.user.username || req.query.userName || "PeerSync User";
+    const userId = String(req.user.id);
     
     console.log(`🔐 Generating JWT for room: ${roomName}, user: ${userName}`);
     
@@ -211,47 +181,12 @@ app.get("/api/jitsi-token", (req, res) => {
 });
 
 // --- 2. CODE EXECUTION (Using Free Community Judge0 - No API Key) ---
-app.post("/api/execute", async (req, res) => {
+app.post("/api/execute", authenticateRequest, async (req, res) => {
   const { language, code } = req.body;
   
   console.log(`📝 Executing ${language} code...`);
   
-  // JavaScript - Local execution (always works 100%)
-  if (language === 'javascript') {
-    try {
-      let output = '';
-      let logs = [];
-      
-      const originalLog = console.log;
-      console.log = (...args) => {
-        logs.push(args.join(' '));
-        originalLog(...args);
-      };
-      
-      try {
-        const AsyncFunction = Object.getPrototypeOf(async function(){}).constructor;
-        const func = new AsyncFunction(code);
-        await func();
-        output = logs.join('\n');
-        if (!output.trim()) {
-          output = '✅ JavaScript code executed successfully (no console output)';
-        }
-      } catch (error) {
-        output = `❌ JavaScript Error: ${error.message}`;
-      } finally {
-        console.log = originalLog;
-      }
-      
-      res.json({ output });
-      return;
-    } catch (error) {
-      console.error('JS execution error:', error);
-      res.status(500).json({ error: error.message });
-      return;
-    }
-  }
-  
-  // Language IDs for free Judge0 CE endpoint
+  // User code is never executed inside this API process.\n  // All supported languages are delegated to the external Judge0 sandbox.\n\n  // Language IDs for free Judge0 CE endpoint
   const languageMap = {
     python: { id: 71, name: 'python' },
     java: { id: 62, name: 'java' },
@@ -381,7 +316,7 @@ For other languages, use Replit or run locally - both are free!`
 const genAI = new GoogleGenerativeAI(process.env.GEMINI_API_KEY);
 const PRIMARY_MODEL = "gemini-2.5-flash";
 
-app.post("/api/summarize", async (req, res) => {
+app.post("/api/summarize", authenticateRequest, async (req, res) => {
   const { roomId, transcript = "General coding session", code = "" } = req.body;
   
   const prompt = `Analyze this code session and transcript. Return a JSON response.
@@ -455,13 +390,22 @@ app.get('/api/api-status', async (req, res) => {
 });
 
 // --- 4. SOCKET.IO ---
-const io = new Server(server, { 
-  cors: { 
-    origin: "*",
+const io = new Server(server, {
+  cors: {
+    origin: allowedOrigins,
     methods: ["GET", "POST"],
     allowedHeaders: ["Bypass-Tunnel-Reminder", "Content-Type", "Authorization", "Cache-Control"],
     credentials: true
-  } 
+  }
+});
+
+io.use((socket, next) => {
+  try {
+    socket.user = verifyAccessToken(socket.handshake.auth?.token);
+    next();
+  } catch {
+    next(new Error("Authentication required"));
+  }
 });
 
 const activeRooms = {}; 
@@ -492,19 +436,32 @@ const starterCode = {
 };
 
 io.on("connection", (socket) => {
-  socket.on("join_room", ({ roomId, userName }) => {
+  const getRoom = (roomId) => {
+    if (typeof roomId !== "string" || roomId.length < 3 || roomId.length > 100) return null;
+    if (socket.data.roomId !== roomId) return null;
+    return activeRooms[roomId] || null;
+  };
+
+  socket.on("join_room", ({ roomId }) => {
+    if (typeof roomId !== "string" || roomId.length < 3 || roomId.length > 100) {
+      return socket.emit("notification", { type: "error", message: "Invalid room ID." });
+    }
+
+    if (socket.data.roomId && socket.data.roomId !== roomId) socket.leave(socket.data.roomId);
+
+    socket.data.roomId = roomId;
+    socket.data.userName = socket.user.username || "PeerSync User";
     socket.join(roomId);
-    
+
     if (!activeRooms[roomId]) {
-      activeRooms[roomId] = { 
+      activeRooms[roomId] = {
         code: starterCode.javascript,
-        driver: socket.id, 
-        driverName: userName || "Anonymous" 
+        driver: socket.id,
+        driverName: socket.data.userName
       };
     }
-    
+
     socket.emit("initial_code", activeRooms[roomId].code);
-    
     io.to(roomId).emit("driver_changed", {
       driverId: activeRooms[roomId].driver,
       driverName: activeRooms[roomId].driverName
@@ -512,83 +469,103 @@ io.on("connection", (socket) => {
   });
 
   socket.on("request_driver_info", ({ roomId }) => {
-    if (activeRooms[roomId]) {
-      socket.emit("driver_changed", {
-        driverId: activeRooms[roomId].driver,
-        driverName: activeRooms[roomId].driverName
-      });
-    }
+    const room = getRoom(roomId);
+    if (!room) return;
+    socket.emit("driver_changed", { driverId: room.driver, driverName: room.driverName });
   });
 
-  socket.on("claim_driver", ({ roomId, name }) => {
-    if (activeRooms[roomId]) {
-      activeRooms[roomId].driver = socket.id;
-      activeRooms[roomId].driverName = name;
-      
-      io.to(roomId).emit("driver_changed", {
-        driverId: socket.id,
-        driverName: name
-      });
-      
-      io.to(roomId).emit("notification", {
-        type: "driver_change",
-        message: `👑 ${name} is now the driver`,
-        timestamp: new Date().toISOString()
+  socket.on("claim_driver", ({ roomId }) => {
+    const room = getRoom(roomId);
+    if (!room) return;
+
+    if (room.driver && room.driver !== socket.id) {
+      return socket.emit("notification", {
+        type: "warning",
+        message: "The current Driver must release control before you can take over."
       });
     }
+
+    room.driver = socket.id;
+    room.driverName = socket.user.username || "PeerSync User";
+    io.to(roomId).emit("driver_changed", { driverId: socket.id, driverName: room.driverName });
+    io.to(roomId).emit("notification", {
+      type: "driver_change",
+      message: `👑 ${room.driverName} is now the driver`,
+      timestamp: new Date().toISOString()
+    });
+  });
+
+  socket.on("release_driver", ({ roomId }) => {
+    const room = getRoom(roomId);
+    if (!room || room.driver !== socket.id) return;
+
+    room.driver = null;
+    room.driverName = null;
+    io.to(roomId).emit("driver_changed", { driverId: null, driverName: null });
+    io.to(roomId).emit("notification", {
+      type: "driver_change",
+      message: "Driver control has been released.",
+      timestamp: new Date().toISOString()
+    });
   });
 
   socket.on("send_caption", async ({ roomId, text }) => {
+    if (!getRoom(roomId) || typeof text !== "string" || !text.trim() || text.length > 2000) return;
     try {
-      const translations = { en: text };
-      const hindiText = await translateText(text, 'hi');
-      translations.hi = hindiText;
+      const cleanText = text.trim();
+      const translations = { en: cleanText, hi: await translateText(cleanText, "hi") };
       io.to(roomId).emit("receive_caption", translations);
     } catch (error) {
-      console.error("Caption broadcast error:", error);
-      io.to(roomId).emit("receive_caption", { en: text, hi: text });
+      console.error("Caption broadcast error:", error.message);
+      io.to(roomId).emit("receive_caption", { en: text.trim(), hi: text.trim() });
     }
   });
 
   socket.on("code_update", ({ roomId, code }) => {
-    if (activeRooms[roomId]?.driver === socket.id) {
-      activeRooms[roomId].code = code;
-      socket.to(roomId).emit("code_update", code);
-    }
+    const room = getRoom(roomId);
+    if (!room || room.driver !== socket.id || typeof code !== "string" || code.length > 200000) return;
+    room.code = code;
+    socket.to(roomId).emit("code_update", code);
   });
 
   socket.on("share_output", ({ roomId, output }) => {
+    if (!getRoom(roomId) || typeof output !== "string" || output.length > 50000) return;
     socket.to(roomId).emit("receive_output", output);
   });
 
   socket.on("language_change", ({ roomId, language }) => {
+    const room = getRoom(roomId);
+    if (!room || room.driver !== socket.id) return;
+    if (!["javascript", "python", "java", "cpp"].includes(language)) return;
     socket.to(roomId).emit("receive_language", language);
   });
 
   socket.on("share_summary", ({ roomId, aiData }) => {
+    if (!getRoom(roomId) || !aiData || typeof aiData !== "object") return;
     io.to(roomId).emit("receive_summary", aiData);
   });
 
   socket.on("disconnect", () => {
-    console.log(`User Disconnected: ${socket.id}`);
-    
-    for (const roomId in activeRooms) {
-      if (activeRooms[roomId]?.driver === socket.id) {
-        io.to(roomId).emit("notification", {
-          type: "driver_left",
-          message: "👋 Driver has left the room",
-          timestamp: new Date().toISOString()
-        });
-        
-        activeRooms[roomId].driver = null;
-        activeRooms[roomId].driverName = null;
-      }
+    const roomId = socket.data.roomId;
+    const room = roomId ? activeRooms[roomId] : null;
+
+    if (room?.driver === socket.id) {
+      room.driver = null;
+      room.driverName = null;
+      io.to(roomId).emit("driver_changed", { driverId: null, driverName: null });
+      io.to(roomId).emit("notification", {
+        type: "driver_left",
+        message: "👋 Driver has left the room",
+        timestamp: new Date().toISOString()
+      });
     }
+
+    if (roomId && io.sockets.adapter.rooms.get(roomId)?.size === 0) delete activeRooms[roomId];
   });
 });
 
 const PORT = process.env.PORT || 5000;
 server.listen(PORT, "0.0.0.0", () => {
   console.log(`🚀 Backend live on port ${PORT}`);
-  console.log(`📋 Jitsi configured with KID: ${process.env.JITSI_KID}`);
+  console.log("📋 Jitsi configuration loaded.");
 });
