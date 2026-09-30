@@ -124,6 +124,15 @@ const api = axios.create({
   timeout: 15000
 });
 
+api.interceptors.request.use((config) => {
+  const token = localStorage.getItem("token");
+  if (token) {
+    config.headers = config.headers || {};
+    config.headers.Authorization = `Bearer ${token}`;
+  }
+  return config;
+});
+
 // Socket with multiple transport fallbacks
 const socket = io(BACKEND_URL, { 
     transports: ['websocket', 'polling'],
